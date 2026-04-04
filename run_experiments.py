@@ -171,7 +171,7 @@ class ExperimentRunner:
         generation = 0
 
         # 新增：保存最后一次运行的KEMM实例（用于可视化内部状态）
-        algo_instance = algo_class(...)
+        algo_instance = algo
 
 
         for ci in range(self.cfg.N_CHANGES):

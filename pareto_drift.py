@@ -320,6 +320,32 @@ class ParetoFrontDriftPredictor:
             for _ in range(feature_dim)
         ]
 
+    def _compute_feature(self, pf_fitness: np.ndarray) -> np.ndarray:
+        """将 Pareto 前沿压缩为固定长度统计特征向量。"""
+        pf = np.atleast_2d(np.asarray(pf_fitness, dtype=float))
+        if pf.size == 0 or pf.shape[0] == 0:
+            return np.zeros(self.feature_dim, dtype=float)
+
+        n_pf, n_obj = pf.shape
+        mean = np.mean(pf, axis=0)
+        std = np.std(pf, axis=0)
+        min_v = np.min(pf, axis=0)
+        max_v = np.max(pf, axis=0)
+        span = max_v - min_v
+
+        feature = np.concatenate([
+            mean[:min(2, n_obj)],
+            std[:min(2, n_obj)],
+            min_v[:min(2, n_obj)],
+            span[:min(2, n_obj)],
+            np.array([float(n_pf)], dtype=float),
+        ])
+        if feature.size < self.feature_dim:
+            feature = np.pad(feature, (0, self.feature_dim - feature.size))
+        else:
+            feature = feature[:self.feature_dim]
+        return feature.astype(float)
+
 
     def update(self, pf_fitness: np.ndarray, time_step: float):
         """
@@ -496,3 +522,16 @@ class ParetoFrontDriftPredictor:
                 y_std  = getattr(gp, '_y_std',  1.0)
                 predicted_mean[i] = float(mu[0]) * y_std + y_mean
                 predicted_std[i]  = float(std[0]) * y_std if std is not None else 1.0
+
+        candidate_solutions = None
+        if var_bounds is not None:
+            lb, ub = var_bounds
+            lb = np.asarray(lb, dtype=float)
+            ub = np.asarray(ub, dtype=float)
+            center = 0.5 * (lb + ub)
+            spread_scale = float(np.clip(np.mean(predicted_std), 0.05, 2.5))
+            spread = (ub - lb) * 0.15 * (1.0 + spread_scale)
+            candidate_solutions = center + np.random.randn(n_samples, len(lb)) * spread
+            candidate_solutions = np.clip(candidate_solutions, lb, ub)
+
+        return predicted_mean, candidate_solutions

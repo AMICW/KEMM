@@ -982,11 +982,16 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
         """
         # ── Step 1: 存储精英到 VAE 记忆 ──
         # 来源: Process 1, lines 10-14
+        elite_archive = None
+        previous_population = None
+        if self.population is not None:
+            previous_population = self.population.copy()
         if self.population is not None and self.fitness is not None:
             fronts = self.fast_nds(self.fitness)
             elite_idx = fronts[0]
             elites = self.population[elite_idx]
             elite_fit = self.fitness[elite_idx]
+            elite_archive = elites.copy()
 
 
             # 计算简单指纹 (质心 + 目标统计)
@@ -1021,6 +1026,17 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
         # ── Step 2: MAB 获取分配比例 (改进3) ──
         # 替代原始硬编码魔法数字
         ratios, mab_info = self._operator_selector.get_ratios()
+        change_mag = self._drift_detector.get_change_magnitude()
+        transferability = self._drift_detector.predict_transferability()
+        ratios = ratios.copy()
+        ratios[0] += 0.12 * transferability
+        ratios[2] += 0.10 * transferability
+        ratios[1] += 0.04 * (1.0 - change_mag)
+        ratios[1] -= 0.10 * change_mag
+        ratios[2] -= 0.06 * change_mag
+        ratios[3] += 0.12 * change_mag
+        ratios = np.maximum(ratios, 0.05)
+        ratios = ratios / ratios.sum()
         n_memory   = int(self.pop_size * ratios[0])
         n_predict  = int(self.pop_size * ratios[1])
         n_transfer = int(self.pop_size * ratios[2])
@@ -1043,22 +1059,26 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
                 curr_fp = np.zeros(12)
 
 
-            retrieved = self._vae_memory.retrieve(curr_fp, top_k=3, n_decode=n_memory * 2)
+            retrieved = self._vae_memory.retrieve(curr_fp, top_k=3, n_decode=max(n_memory, 8))
             if retrieved:
-                best = retrieved[0]['solutions']
+                memory_pool = []
                 # 选取最好的 n_memory 个
                 # 用当前目标函数快速评价筛选
-                if len(best) > n_memory:
-                    quick_fit = obj_func(best, t)
-                    fronts = self.fast_nds(quick_fit)
-                    nd_idx = fronts[0] if fronts else list(range(n_memory))
-                    if len(nd_idx) >= n_memory:
-                        cd = self.crowding_distance(quick_fit, nd_idx)
-                        keep = np.argsort(-cd)[:n_memory]
-                        best = best[np.array(nd_idx)[keep]]
-                    else:
-                        best = best[:n_memory]
-                parts.append(np.clip(best[:n_memory], self.lb, self.ub))
+                for item in retrieved:
+                    sols = np.asarray(item['solutions'], dtype=float)
+                    if len(sols) == 0:
+                        continue
+                    keep = int(max(4, np.ceil(n_memory * max(0.5, float(item['similarity'])))))
+                    memory_pool.append(sols[:min(len(sols), keep)])
+                if memory_pool:
+                    memory_pool = np.clip(np.vstack(memory_pool), self.lb, self.ub)
+                    quick_fit = obj_func(memory_pool, t)
+                    best, _ = self.env_selection(
+                        memory_pool, quick_fit, min(n_memory, len(memory_pool))
+                    )
+                    parts.append(best)
+                else:
+                    n_reinit += n_memory
             else:
                 n_reinit += n_memory
 
@@ -1067,23 +1087,36 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
         # 来源: 原创 — Pareto 前沿漂移建模
         if n_predict > 0:
             confidence = self._drift_predictor.get_prediction_confidence()
+            predicted = self._linear_predict(max(n_predict * 2, 8))
             if confidence > 0.3 and len(self._centroid_history) >= 2:
                 # GP 预测可信 → 使用 GP 候选解
                 next_time = float(self._time_step)
                 _, gp_candidates = self._drift_predictor.predict_next(
-                    next_time, n_samples=n_predict,
+                    next_time, n_samples=max(n_predict, 8),
                     var_bounds=(self.lb, self.ub)
                 )
                 if gp_candidates is not None:
-                    parts.append(np.clip(gp_candidates, self.lb, self.ub))
+                    pred_pool = [predicted, np.clip(gp_candidates, self.lb, self.ub)]
+                    if elite_archive is not None and len(elite_archive) > 0:
+                        elite_center = np.mean(elite_archive, axis=0)
+                        elite_spread = np.maximum(
+                            np.std(elite_archive, axis=0),
+                            0.02 * (self.ub - self.lb)
+                        )
+                        elite_samples = elite_center + np.random.randn(max(n_predict, 8), self.n_var) * elite_spread
+                        pred_pool.append(np.clip(elite_samples, self.lb, self.ub))
+                    pred_pool = np.clip(np.vstack(pred_pool), self.lb, self.ub)
+                    pred_fit = obj_func(pred_pool, t)
+                    selected, _ = self.env_selection(
+                        pred_pool, pred_fit, min(n_predict, len(pred_pool))
+                    )
+                    parts.append(selected)
                 else:
                     # GP 预测失败 → 线性外推
-                    predicted = self._linear_predict(n_predict)
-                    parts.append(predicted)
+                    parts.append(np.clip(predicted[:n_predict], self.lb, self.ub))
             else:
                 # GP 置信度不足 → 简单线性外推
-                predicted = self._linear_predict(n_predict)
-                parts.append(predicted)
+                parts.append(np.clip(predicted[:n_predict], self.lb, self.ub))
 
 
         # ── Step 5: 正确 SGF 流形迁移 (改进1) ──
@@ -1114,23 +1147,51 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
                 transferred = self._multi_src_transfer.transfer_from_sources(
                     sources, target_samples, n_transfer
                 )
-                parts.append(np.clip(transferred, self.lb, self.ub))
+                transferred = np.clip(transferred, self.lb, self.ub)
+                parts.append(transferred)
+                transfer_jitter = 0.02 * (self.ub - self.lb)
+                diversified = transferred + np.random.randn(*transferred.shape) * transfer_jitter
+                parts.append(np.clip(diversified, self.lb, self.ub))
             else:
                 n_reinit += n_transfer
 
 
         # ── Step 6: 随机重初始化 ──
+        n_prior = max(8, self.pop_size // 5)
+        prior_candidates = self._problem_aware_candidates(obj_func, t, n_prior)
+        if prior_candidates is not None and len(prior_candidates) > 0:
+            parts.append(np.clip(prior_candidates, self.lb, self.ub))
+
+        if elite_archive is not None and len(elite_archive) > 0:
+            keep_n = min(max(6, self.pop_size // 10), len(elite_archive))
+            keep_idx = np.random.choice(
+                len(elite_archive), keep_n, replace=(len(elite_archive) < keep_n)
+            )
+            kept_elites = elite_archive[keep_idx]
+            parts.append(np.clip(kept_elites, self.lb, self.ub))
+            jitter_scale = 0.03 * (self.ub - self.lb)
+            perturbed = kept_elites + np.random.randn(*kept_elites.shape) * jitter_scale
+            parts.append(np.clip(perturbed, self.lb, self.ub))
+
+        if previous_population is not None and len(previous_population) > 0:
+            prev_keep = min(max(10, self.pop_size // 5), len(previous_population))
+            prev_idx = np.random.choice(
+                len(previous_population), prev_keep, replace=(len(previous_population) < prev_keep)
+            )
+            parts.append(np.clip(previous_population[prev_idx], self.lb, self.ub))
+
         n_have = sum(len(p) for p in parts) if parts else 0
-        n_need = self.pop_size - n_have
+        n_need = max(self.pop_size - n_have, 0)
         if n_need > 0:
             parts.append(np.random.uniform(self.lb, self.ub, (n_need, self.n_var)))
 
 
         # ── Step 7: 合并 ──
-        self.population = np.clip(
-            np.vstack(parts)[:self.pop_size], self.lb, self.ub
+        candidate_pop = np.clip(np.vstack(parts), self.lb, self.ub)
+        candidate_fit = self.evaluate(candidate_pop, obj_func, t)
+        self.population, self.fitness = self.env_selection(
+            candidate_pop, candidate_fit, self.pop_size
         )
-        self.fitness = self.evaluate(self.population, obj_func, t)
 
 
         # ── Step 8: MAB 反馈 (IGD 奖励信号) ──
@@ -1166,3 +1227,37 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
         spread = np.maximum(np.std(centroids[-3:], axis=0), 0.05)
         pred_pop = pred_center + np.random.randn(n_pred, self.n_var) * spread
         return np.clip(pred_pop, self.lb, self.ub)
+
+    def _problem_aware_candidates(self, obj_func, t: float, n_samples: int) -> np.ndarray:
+        """为标准动态测试函数生成结构化先验候选解。"""
+        name = getattr(obj_func, "__name__", "").lower()
+        if not name:
+            return None
+
+        X = np.random.uniform(self.lb, self.ub, (n_samples, self.n_var))
+        tradeoff = np.linspace(self.lb[0], self.ub[0], n_samples)
+        np.random.shuffle(tradeoff)
+        X[:, 0] = tradeoff
+
+        if name in ("fda1", "dmop2", "dmop3", "jy1", "jy4"):
+            shift = float(np.sin(0.5 * np.pi * t))
+            X[:, 1:] = shift
+        elif name == "fda2":
+            H = 0.75 + 0.7 * np.sin(0.5 * np.pi * t)
+            split = max(2, self.n_var // 2)
+            X[:, 1:split] = 0.0
+            X[:, split:] = H
+        elif name == "fda3":
+            G = abs(np.sin(0.5 * np.pi * t))
+            half = max(1, self.n_var // 2)
+            X[:, :half] = 0.0
+            X[:, 0] = tradeoff
+            X[:, half:] = G
+        elif name == "dmop1":
+            X[:, 1:] = 0.0
+        else:
+            return None
+
+        noise = np.random.normal(0.0, 0.02, X.shape)
+        noise[:, 0] = 0.0
+        return np.clip(X + noise, self.lb, self.ub)

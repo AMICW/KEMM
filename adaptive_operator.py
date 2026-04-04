@@ -432,13 +432,21 @@ class AdaptiveOperatorSelector:
         reward = float(np.clip(reward, 0.0, 1.0))
 
 
-        # 为本次使用的所有策略更新奖励
-        # (按比例加权分配奖励)
+        # 对奖励做更有区分度的归因：
+        # 主导策略获得主要奖励，其余高占比策略只获得较小的辅助奖励。
+        # 这样能避免“所有策略都一起领功”导致 MAB 学不出偏好。
         if self._prev_ratios is not None:
+            dominant_idx = int(np.argmax(self._prev_ratios))
             for arm_idx in range(4):
-                if self._prev_ratios[arm_idx] > self.min_ratio + 0.01:
-                    # 仅更新实际使用的策略
-                    self.bandit.update(arm_idx, reward)
+                ratio = float(self._prev_ratios[arm_idx])
+                if ratio <= self.min_ratio + 0.01:
+                    continue
+
+                if arm_idx == dominant_idx:
+                    credited_reward = reward
+                else:
+                    credited_reward = reward * min(0.35, ratio)
+                self.bandit.update(arm_idx, credited_reward)
 
 
         self._prev_igd = current_igd

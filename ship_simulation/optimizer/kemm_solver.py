@@ -18,7 +18,7 @@ from typing import Dict, List
 
 import numpy as np
 
-from benchmark_algorithms import KEMM_DMOEA_Improved
+from kemm.algorithms.kemm import KEMM_DMOEA_Improved
 from ship_simulation.config import DemoConfig
 from ship_simulation.optimizer.interface import ShipOptimizerInterface
 from ship_simulation.optimizer.problem import EvaluationResult
@@ -65,6 +65,7 @@ class ShipKEMMOptimizer:
                 n_var=self.context.n_var,
                 n_obj=self.context.n_obj,
                 var_bounds=bounds,
+                benchmark_aware_prior=False,
             )
             algo.initialize()
             self._inject_initial_guesses(algo.population)

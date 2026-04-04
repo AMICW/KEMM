@@ -1,3 +1,6 @@
-__pycache__
+__pycache__/
+*.py[cod]
 *.png
 *.jpg
+ship_simulation/outputs/
+benchmark_outputs/

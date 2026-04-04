@@ -1,16 +1,13 @@
-"""ship_simulation/optimizer/problem.py
+﻿"""将船舶仿真场景封装为标准多目标优化问题。
 
-本文件负责把“船舶轨迹规划仿真”封装成一个标准多目标优化问题。
+这个文件是 `ship_simulation` 主线里最重要的连接层之一。上游的场景生成器负责
+构造会遇场景、起终点和目标船初始状态；下游的优化算法只关心一个黑盒问题：
 
-这是连接“物理仿真”和“优化算法”的关键文件：
-- 上游接收场景、配置、决策变量
-- 中间调用船模、风险模型、燃油模型完成评估
-- 下游输出多目标值，供 Pareto 优化算法搜索
+1. 给定决策向量 `[x1, y1, v1, x2, y2, v2, ...]`
+2. 返回三目标值 `[fuel, time, risk]`
 
-当前目标函数为：
-1. 燃油消耗
-2. 总航行时间
-3. 碰撞风险
+本模块负责把这两者连接起来，并把运动学仿真、燃油计算、碰撞风险评估和终点
+惩罚统一组织成一个可重复调用的接口。
 """
 
 from __future__ import annotations
@@ -30,10 +27,10 @@ from ship_simulation.scenario.encounter import EncounterScenario
 
 @dataclass
 class EvaluationResult:
-    """单个候选解的完整评估结果。
+    """保存单个候选解的完整评估结果。
 
-    优化器通常只关心 objectives，
-    但做调试、分析和动画展示时，经常还需要轨迹和风险细节。
+    优化器通常只需要 `objectives`，但在调试、画图、写报告时，还需要轨迹、风险
+    分解、终点到达情况等额外信息，因此这里统一返回完整结果对象。
     """
 
     objectives: np.ndarray
@@ -45,43 +42,62 @@ class EvaluationResult:
 
 
 class ShipTrajectoryProblem:
-    """基于决策向量的船舶多目标轨迹规划问题。"""
+    """船舶多目标轨迹规划问题。
+
+    该类面向优化算法提供统一接口：
+
+    - `evaluate(x)`：评估单个解
+    - `evaluate_population(X)`：批量评估
+    - `describe()`：返回变量维度、边界、初始猜测等元数据
+
+    目标函数当前固定为三目标最小化：
+
+    1. 燃油消耗
+    2. 航行总时间
+    3. 综合碰撞风险
+    """
 
     def __init__(self, scenario: EncounterScenario, config: ProblemConfig):
         self.scenario = scenario
         self.config = config
 
-        # 在问题对象内部组装完整仿真链路
+        # 在问题对象内部一次性组装完整仿真链路，避免外部调用者了解底层细节。
         self.environment = EnvironmentField(config.environment)
         self.own_ship_model = NomotoShip(config.ship, config.simulation, self.environment)
         self.target_ship_model = NomotoShip(config.ship, config.simulation, self.environment)
         self.risk_model = ShipDomainRiskModel(config.ship, config.domain)
         self.fuel_model = FuelConsumptionModel(config.environment)
 
-        # 决策变量采用 [x1, y1, v1, x2, y2, v2, ...] 编码
+        # 决策变量采用固定长度编码，每个中间航路点包含三项：
+        # x 坐标、y 坐标、该段目标航速。
         self.n_waypoints = config.num_intermediate_waypoints
         self.n_var = self.n_waypoints * 3
         self.n_obj = 3
         self.var_bounds = self._build_bounds()
 
     def _build_bounds(self) -> np.ndarray:
-        """构造每个决策变量的上下界。"""
+        """构造决策变量上下界矩阵。
+
+        返回形状为 `(n_var, 2)` 的数组。每一行对应一个变量的 `[lower, upper]`。
+        """
 
         xmin, xmax, ymin, ymax = self.scenario.area
         vmin, vmax = self.config.speed_bounds
-        bounds = []
+        bounds: List[Tuple[float, float]] = []
+
         for _ in range(self.n_waypoints):
-            # 每个中间航路点包含 x, y 和该段目标速度 v
             bounds.extend([(xmin, xmax), (ymin, ymax), (vmin, vmax)])
+
         return np.asarray(bounds, dtype=float)
 
     def initial_guess(self) -> np.ndarray:
-        """构造一条直线初始猜测轨迹。
+        """构造一条直线初始轨迹。
 
-        这对进化算法并不是必需的，但通常有利于：
-        - 提供一个可行的起点参考
-        - 做 baseline 对比
-        - 用于调试和可视化
+        该初始解不是必须的，但在多数进化优化场景下有三个用途：
+
+        1. 给算法一个稳定的可行起点
+        2. 作为随机搜索之外的 baseline
+        3. 作为调试和可视化时的参考轨迹
         """
 
         start = self.scenario.own_ship.initial_state.position()
@@ -89,15 +105,21 @@ class ShipTrajectoryProblem:
         fractions = np.linspace(0.0, 1.0, self.n_waypoints + 2)[1:-1]
         vector = np.zeros(self.n_var, dtype=float)
         cruise_speed = float(np.mean(self.config.speed_bounds))
+
         for idx, frac in enumerate(fractions):
-            wp = start + frac * (goal - start)
+            waypoint = start + frac * (goal - start)
             base = idx * 3
-            vector[base : base + 2] = wp
+            vector[base : base + 2] = waypoint
             vector[base + 2] = cruise_speed
+
         return vector
 
     def decode(self, decision_vector: Sequence[float]) -> Tuple[List[np.ndarray], List[float]]:
-        """把扁平决策向量解码为航路点序列和速度序列。"""
+        """把扁平决策向量解码为航路点序列和速度序列。
+
+        输入向量只包含中间航路点，终点不是优化变量，而是由场景直接给定。为方便
+        仿真，本函数会自动把场景终点追加到航路点序列尾部。
+        """
 
         vector = np.asarray(decision_vector, dtype=float)
         if vector.size != self.n_var:
@@ -110,38 +132,44 @@ class ShipTrajectoryProblem:
             waypoints.append(np.array([vector[base], vector[base + 1]], dtype=float))
             speeds.append(float(vector[base + 2]))
 
-        # 终点不是优化变量，而是由场景直接给定的固定目标点
+        # 终点固定由场景定义，不参与优化编码。
         waypoints.append(np.asarray(self.scenario.own_ship.goal, dtype=float))
 
-        # 最后一段终点速度沿用最后一个中间段速度
+        # 最后一段沿用上一段的目标航速；如果没有中间点，则回退到平均速度。
         speeds.append(speeds[-1] if speeds else float(np.mean(self.config.speed_bounds)))
         return waypoints, speeds
 
     def simulate(self, decision_vector: Sequence[float]) -> EvaluationResult:
-        """执行一次完整仿真并计算三目标值。"""
+        """执行一次完整仿真并返回评估结果。
+
+        这里的处理策略是“软边界 + 惩罚”而不是“越界即报错”：
+
+        - 先把决策向量裁剪到合法范围内
+        - 再把越界量转换为惩罚项加到目标函数中
+
+        这样做对进化算法更友好，因为候选解在早期阶段经常会落到边界外。
+        """
 
         vector = np.asarray(decision_vector, dtype=float)
-
-        # 为了方便和通用优化器直接对接，这里不硬性报错越界，
-        # 而是先裁剪到合法范围，再把越界量转成惩罚项加入目标值
         clipped = np.clip(vector, self.var_bounds[:, 0], self.var_bounds[:, 1])
         bounds_penalty = float(np.linalg.norm(vector - clipped, ord=1) * self.config.penalty_out_of_bounds)
         waypoints, speeds = self.decode(clipped)
 
-        # 仿真本船轨迹
+        # 本船走“跟踪航路点 + Nomoto 一阶转向响应”的仿真。
         own_trajectory = self.own_ship_model.simulate_route(
             initial_state=self.scenario.own_ship.initial_state,
             waypoints=waypoints,
             segment_speeds=speeds,
         )
 
-        # 目标船默认采用恒向恒速预测
+        # 目标船当前采用恒向恒速预测，这是 MVP 阶段的简化建模。
         target_trajectories = [
             self.target_ship_model.simulate_constant_velocity(target.initial_state)
             for target in self.scenario.target_ships
         ]
 
-        # 计算三个真实物理语义目标
+        # 风险评估与终点惩罚共同构成第三目标。
+        # 其中终点惩罚的作用是避免“没到终点却看起来时间更短”的伪优解。
         risk = self.risk_model.evaluate(own_trajectory, target_trajectories)
         terminal_distance = float(own_trajectory.terminal_distance)
         terminal_fuel_penalty = terminal_distance * self.config.terminal_fuel_penalty_per_meter
@@ -167,21 +195,22 @@ class ShipTrajectoryProblem:
         )
 
     def evaluate(self, decision_vector: Sequence[float]) -> np.ndarray:
-        """返回单个候选解的目标值向量。"""
+        """返回单个候选解的三目标值。"""
 
         return self.simulate(decision_vector).objectives
 
     def evaluate_population(self, population: np.ndarray) -> np.ndarray:
-        """批量评估多个候选解。
+        """批量评估候选解种群。
 
-        这是和进化算法对接时最常用的入口。
+        当前实现仍是串行循环，这是 MVP 阶段为了保持逻辑直观而做的取舍。
+        后续如果接大规模实验，可以在这里替换为并行评估或向量化积分接口。
         """
 
         pop = np.atleast_2d(np.asarray(population, dtype=float))
         return np.vstack([self.evaluate(individual) for individual in pop])
 
     def describe(self) -> Dict[str, object]:
-        """返回优化器接入时常用的元数据。"""
+        """返回优化器最常用的问题元数据。"""
 
         return {
             "n_var": self.n_var,

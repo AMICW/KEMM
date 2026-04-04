@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import cos, sin
 from typing import Iterable
 
@@ -37,6 +37,7 @@ class RiskBreakdown:
     max_risk: float
     mean_risk: float
     intrusion_time: float
+    risk_series: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=float))
 
 
 class ShipDomainRiskModel:
@@ -120,4 +121,5 @@ class ShipDomainRiskModel:
             max_risk=float(np.max(per_step_risk)),
             mean_risk=float(np.mean(per_step_risk)),
             intrusion_time=intrusion_time,
+            risk_series=per_step_risk.copy(),
         )

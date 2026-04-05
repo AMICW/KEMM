@@ -1,10 +1,12 @@
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from apps.reporting import BenchmarkFigurePayload, BenchmarkPlotConfig, PublicationStyle, generate_all_figures
 from kemm.core.types import KEMMChangeDiagnostics
 from kemm.reporting import export_benchmark_report
+from reporting_config import interactive_bundle_path
 
 
 class _DummyConfig:
@@ -132,11 +134,25 @@ class BenchmarkReportingTests(unittest.TestCase):
             results=results,
             problems=["FDA1"],
             igd_curves=igd_curves,
+            hv_curves={
+                "KEMM": {"FDA1": [[0.2, 0.3, 0.35], [0.18, 0.29, 0.36]]},
+                "KF": {"FDA1": [[0.1, 0.14, 0.18], [0.09, 0.13, 0.17]]},
+            },
             diagnostics=diagnostics,
+            ablation_results={
+                "KEMM-Full": {
+                    "FDA1": {"MIGD": [1.0, 1.05], "SP": [0.31, 0.33], "MS": [0.82, 0.83], "TIME": [0.1, 0.1]},
+                },
+                "MMTL-Original": {
+                    "FDA1": {"MIGD": [1.25, 1.2], "SP": [0.42, 0.43], "MS": [0.72, 0.73], "TIME": [0.1, 0.1]},
+                },
+            },
             plot_config=BenchmarkPlotConfig(
                 style=PublicationStyle(dpi=180, title_size=12, label_size=10),
                 rank_bar_width=8.0,
                 rank_bar_height=3.6,
+                appendix_plots=True,
+                interactive_figures=True,
             ),
         )
 
@@ -147,11 +163,50 @@ class BenchmarkReportingTests(unittest.TestCase):
         self.assertTrue((output_dir / "benchmark_heatmap.png").exists())
         self.assertTrue((output_dir / "benchmark_rank_bar.png").exists())
         self.assertTrue((output_dir / "benchmark_igd_time.png").exists())
+        self.assertTrue((output_dir / "benchmark_hv_time.png").exists())
         self.assertTrue((output_dir / "benchmark_operator_ratios.png").exists())
         self.assertTrue((output_dir / "benchmark_response_quality.png").exists())
         self.assertTrue((output_dir / "benchmark_prediction_confidence.png").exists())
         self.assertTrue((output_dir / "benchmark_change_dashboard.png").exists())
         self.assertTrue((output_dir / "benchmark_pairwise_wins.png").exists())
+        self.assertTrue((output_dir / "benchmark_ablation.png").exists())
+        self.assertTrue(interactive_bundle_path(output_dir / "benchmark_metrics_grid.png").exists())
+
+    def test_generate_all_figures_skips_appendix_plot_by_default(self):
+        results = {
+            "KEMM": {"FDA1": {"MIGD": [1.0, 1.1], "SP": [0.3, 0.35], "MS": [0.8, 0.82], "TIME": [0.1, 0.1]}},
+            "KF": {"FDA1": {"MIGD": [1.3, 1.4], "SP": [0.45, 0.5], "MS": [0.7, 0.72], "TIME": [0.1, 0.1]}},
+        }
+        output_dir = Path("benchmark_outputs") / "reporting_payload_no_appendix"
+        payload = BenchmarkFigurePayload(
+            results=results,
+            problems=["FDA1"],
+            plot_config=BenchmarkPlotConfig(style=PublicationStyle(dpi=120)),
+        )
+        generate_all_figures(payload=payload, output_prefix=str(output_dir / "benchmark"))
+        self.assertTrue((output_dir / "benchmark_metrics_grid.png").exists())
+        self.assertFalse((output_dir / "benchmark_migd_bar.png").exists())
+
+    def test_generate_all_figures_falls_back_without_scienceplots(self):
+        results = {
+            "KEMM": {"FDA1": {"MIGD": [1.0, 1.1], "SP": [0.3, 0.35], "MS": [0.8, 0.82], "TIME": [0.1, 0.1]}},
+            "KF": {"FDA1": {"MIGD": [1.3, 1.4], "SP": [0.45, 0.5], "MS": [0.7, 0.72], "TIME": [0.1, 0.1]}},
+        }
+        output_dir = Path("benchmark_outputs") / "reporting_payload_science_fallback"
+        payload = BenchmarkFigurePayload(
+            results=results,
+            problems=["FDA1"],
+            plot_config=BenchmarkPlotConfig(
+                style=PublicationStyle(
+                    dpi=120,
+                    use_scienceplots=True,
+                    science_styles=("science", "ieee", "no-latex"),
+                )
+            ),
+        )
+        with patch("reporting_config.HAS_SCIENCEPLOTS", False):
+            generate_all_figures(payload=payload, output_prefix=str(output_dir / "benchmark"))
+        self.assertTrue((output_dir / "benchmark_metrics_grid.png").exists())
 
 
 if __name__ == "__main__":

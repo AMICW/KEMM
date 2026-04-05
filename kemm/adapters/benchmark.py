@@ -1,10 +1,8 @@
 """Benchmark-only structural priors for KEMM.
 
-这个模块的存在是为了把“通用 KEMM 核心”和“针对标准测试函数的结构先验”明确分层。
-以后你要改算法主体时，可以不碰这里；要改 benchmark 强化策略时，也不需要回到
-`kemm/algorithms/kemm.py` 里找硬编码。
+This adapter keeps FDA, DMOP, and JY test-function hints out of the generic
+KEMM core so real application pipelines can stay problem-agnostic.
 """
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,17 +12,13 @@ import numpy as np
 
 @dataclass
 class BenchmarkPriorAdapterConfig:
-    """benchmark 先验候选生成器配置。"""
+    """Configuration for benchmark-only prior candidate generation."""
 
     noise_std: float = 0.02
 
 
 class BenchmarkPriorAdapter:
-    """针对标准动态测试问题生成结构先验候选。
-
-    这是 benchmark-aware enhancement，不是通用 KEMM 理论模块。
-    对 ship 或其他真实问题，默认不应启用。
-    """
+    """Generates analytic warm-start candidates for known dynamic benchmark families."""
 
     def __init__(self, config: BenchmarkPriorAdapterConfig | None = None):
         self.config = config or BenchmarkPriorAdapterConfig()

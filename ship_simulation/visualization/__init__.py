@@ -1,29 +1,59 @@
-"""Visualization exports for ship simulation."""
+﻿"""ship 可视化导出。"""
 
 from reporting_config import ShipPlotConfig
 from ship_simulation.visualization.animator import TrajectoryAnimator
+from ship_simulation.visualization.figure_viewer import open_figure_bundle
 from ship_simulation.visualization.report_plots import (
     ExperimentSeries,
+    save_control_time_series,
     save_convergence_plot,
+    save_convergence_statistics,
+    save_distribution_violin,
+    save_dynamic_avoidance_snapshots,
+    save_environment_overlay,
     save_normalized_objective_bars,
+    save_parallel_coordinates,
+    save_pareto_3d_with_knee,
+    save_pareto_projection_panel,
     save_pareto_scatter,
+    save_radar_chart,
+    save_risk_breakdown_time_series,
     save_risk_bars,
     save_risk_time_series,
+    save_route_planning_panel,
+    save_run_statistics_panel,
+    save_safety_envelope_plot,
     save_speed_profiles,
+    save_spatiotemporal_plot,
     save_summary_dashboard,
     save_trajectory_comparison,
 )
 
 __all__ = [
     "ExperimentSeries",
+    "open_figure_bundle",
     "ShipPlotConfig",
     "TrajectoryAnimator",
+    "save_control_time_series",
     "save_convergence_plot",
+    "save_convergence_statistics",
+    "save_distribution_violin",
+    "save_dynamic_avoidance_snapshots",
+    "save_environment_overlay",
     "save_normalized_objective_bars",
+    "save_parallel_coordinates",
+    "save_pareto_3d_with_knee",
+    "save_pareto_projection_panel",
     "save_pareto_scatter",
+    "save_radar_chart",
+    "save_risk_breakdown_time_series",
     "save_risk_bars",
     "save_risk_time_series",
+    "save_route_planning_panel",
+    "save_run_statistics_panel",
+    "save_safety_envelope_plot",
     "save_speed_profiles",
+    "save_spatiotemporal_plot",
     "save_summary_dashboard",
     "save_trajectory_comparison",
 ]

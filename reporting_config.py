@@ -1,35 +1,26 @@
-"""Shared plot-style configuration for benchmark and ship reports.
-
-这个模块把“论文图表长什么样”从具体绘图函数里抽出来，形成显式配置层。
-后续如果你要：
-
-- 调整字体、字号、线宽、DPI
-- 更换配色方案
-- 统一 benchmark 与 ship 的图表风格
-- 针对投稿期刊改版尺寸
-
-优先改这里，而不是逐个图函数内找硬编码。
-"""
+﻿"""benchmark 与 ship 主线共享的绘图配置层。"""
 
 from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterator
+import pickle
 import warnings
 
 try:
     import matplotlib
 
     HAS_MPL = True
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover
     HAS_MPL = False
 
 try:
     import scienceplots  # noqa: F401
 
     HAS_SCIENCEPLOTS = True
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover
     HAS_SCIENCEPLOTS = False
 
 
@@ -56,10 +47,11 @@ DEFAULT_BENCHMARK_MARKERS = {
 
 @dataclass
 class PublicationStyle:
-    """Matplotlib 通用排版参数。"""
+    """Matplotlib 的通用排版配置。"""
 
     dpi: int = 320
     font_family: str = "DejaVu Sans"
+    chinese_font_fallback: tuple[str, ...] = ("Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "Arial Unicode MS")
     use_scienceplots: bool = False
     science_styles: tuple[str, ...] = ("science", "no-latex")
     title_size: int = 14
@@ -80,116 +72,11 @@ class PublicationStyle:
 
 
 PLOT_STYLE_PRESETS = {
-    # 项目当前的安全默认风格：不依赖 SciencePlots，兼容性最好。
-    "default": dict(
-        dpi=320,
-        font_family="DejaVu Sans",
-        use_scienceplots=False,
-        science_styles=("science", "no-latex"),
-        title_size=14,
-        label_size=11,
-        tick_size=10,
-        legend_size=9,
-        line_width=2.1,
-        emphasis_line_width=2.8,
-        marker_size=5.6,
-        scatter_size=34.0,
-        grid_alpha=0.18,
-        band_alpha=0.12,
-        bar_alpha=0.9,
-        figure_facecolor="#ffffff",
-        axes_facecolor="#fcfcfd",
-        grid_color="#d0d7de",
-        spine_color="#9aa4b2",
-    ),
-    # 通用论文图风格：推荐投稿前的大多数结果图先从这个预设开始。
-    "paper": dict(
-        dpi=360,
-        font_family="DejaVu Sans",
-        use_scienceplots=True,
-        science_styles=("science", "no-latex"),
-        title_size=15,
-        label_size=12,
-        tick_size=10,
-        legend_size=9,
-        line_width=2.15,
-        emphasis_line_width=2.9,
-        marker_size=5.8,
-        scatter_size=36.0,
-        grid_alpha=0.16,
-        band_alpha=0.10,
-        bar_alpha=0.9,
-        figure_facecolor="#ffffff",
-        axes_facecolor="#fcfcfd",
-        grid_color="#d0d7de",
-        spine_color="#9aa4b2",
-    ),
-    # IEEE 风格：适合 benchmark 主线的对比图和排名图。
-    "ieee": dict(
-        dpi=380,
-        font_family="DejaVu Sans",
-        use_scienceplots=True,
-        science_styles=("science", "ieee", "no-latex"),
-        title_size=14,
-        label_size=11,
-        tick_size=9,
-        legend_size=8,
-        line_width=2.0,
-        emphasis_line_width=2.7,
-        marker_size=5.2,
-        scatter_size=30.0,
-        grid_alpha=0.14,
-        band_alpha=0.10,
-        bar_alpha=0.9,
-        figure_facecolor="#ffffff",
-        axes_facecolor="#ffffff",
-        grid_color="#d0d7de",
-        spine_color="#8c959f",
-    ),
-    # Nature 风格：更强调简洁和页面展示效果。
-    "nature": dict(
-        dpi=380,
-        font_family="DejaVu Sans",
-        use_scienceplots=True,
-        science_styles=("science", "nature", "no-latex"),
-        title_size=15,
-        label_size=11,
-        tick_size=9,
-        legend_size=8,
-        line_width=2.0,
-        emphasis_line_width=2.7,
-        marker_size=5.0,
-        scatter_size=28.0,
-        grid_alpha=0.10,
-        band_alpha=0.08,
-        bar_alpha=0.88,
-        figure_facecolor="#ffffff",
-        axes_facecolor="#ffffff",
-        grid_color="#e5e7eb",
-        spine_color="#9ca3af",
-    ),
-    # Thesis 风格：更适合大图、答辩和说明性较强的图板。
-    "thesis": dict(
-        dpi=320,
-        font_family="DejaVu Sans",
-        use_scienceplots=False,
-        science_styles=("science", "no-latex"),
-        title_size=16,
-        label_size=12,
-        tick_size=11,
-        legend_size=10,
-        line_width=2.3,
-        emphasis_line_width=3.0,
-        marker_size=6.2,
-        scatter_size=38.0,
-        grid_alpha=0.20,
-        band_alpha=0.12,
-        bar_alpha=0.92,
-        figure_facecolor="#ffffff",
-        axes_facecolor="#fcfcfd",
-        grid_color="#d0d7de",
-        spine_color="#9aa4b2",
-    ),
+    "default": dict(dpi=320, font_family="DejaVu Sans", use_scienceplots=False, science_styles=("science", "no-latex")),
+    "paper": dict(dpi=360, font_family="DejaVu Sans", use_scienceplots=True, science_styles=("science", "no-latex"), title_size=15, label_size=12),
+    "ieee": dict(dpi=380, font_family="DejaVu Sans", use_scienceplots=True, science_styles=("science", "ieee", "no-latex"), title_size=14, label_size=11, tick_size=9, legend_size=8),
+    "nature": dict(dpi=380, font_family="DejaVu Sans", use_scienceplots=True, science_styles=("science", "nature", "no-latex"), title_size=15, label_size=11, tick_size=9, legend_size=8, grid_alpha=0.10),
+    "thesis": dict(dpi=320, font_family="DejaVu Sans", use_scienceplots=False, science_styles=("science", "no-latex"), title_size=16, label_size=12, legend_size=10),
 }
 
 
@@ -204,17 +91,31 @@ BENCHMARK_PLOT_PRESETS = {
 
 SHIP_PLOT_PRESETS = {
     "default": dict(),
-    "paper": dict(trajectory_figsize=(11.0, 6.6), comparison_figsize=(14.4, 5.0), dashboard_figsize=(14.5, 10.2)),
-    "ieee": dict(trajectory_figsize=(10.2, 6.0), comparison_figsize=(13.5, 4.6), dashboard_figsize=(13.2, 9.4)),
-    "nature": dict(trajectory_figsize=(10.0, 6.0), comparison_figsize=(13.2, 4.6), dashboard_figsize=(13.8, 9.6)),
-    "thesis": dict(trajectory_figsize=(12.0, 7.0), comparison_figsize=(15.0, 5.2), dashboard_figsize=(15.6, 11.0)),
+    "paper": dict(
+        overlay_figsize=(11.8, 7.0),
+        route_panel_figsize=(13.2, 8.2),
+        snapshot_figsize=(13.0, 8.4),
+        spatiotemporal_figsize=(10.2, 7.0),
+        control_figsize=(10.4, 8.8),
+        pareto3d_figsize=(8.2, 6.2),
+        pareto_projection_figsize=(12.2, 4.2),
+        parallel_figsize=(11.8, 5.6),
+        radar_figsize=(7.2, 7.0),
+        violin_figsize=(11.0, 5.8),
+        convergence_figsize=(9.4, 5.2),
+        risk_breakdown_figsize=(10.2, 7.0),
+        safety_envelope_figsize=(10.2, 7.2),
+        statistics_figsize=(12.0, 4.8),
+        dashboard_figsize=(15.2, 11.2),
+    ),
+    "ieee": dict(overlay_figsize=(10.8, 6.5), snapshot_figsize=(12.0, 7.6), dashboard_figsize=(14.0, 10.2)),
+    "nature": dict(overlay_figsize=(10.8, 6.5), snapshot_figsize=(12.0, 7.6), dashboard_figsize=(14.2, 10.2)),
+    "thesis": dict(overlay_figsize=(12.4, 7.4), snapshot_figsize=(13.6, 8.8), dashboard_figsize=(16.2, 12.0)),
 }
 
 
 @dataclass
 class BenchmarkPlotConfig:
-    """benchmark 主线图表配置。"""
-
     style: PublicationStyle = field(default_factory=PublicationStyle)
     colors: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_BENCHMARK_COLORS))
     markers: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_BENCHMARK_MARKERS))
@@ -229,44 +130,63 @@ class BenchmarkPlotConfig:
     rank_bar_height: float = 4.2
     dashboard_width: float = 12.0
     dashboard_height: float = 8.0
+    appendix_plots: bool = False
+    interactive_figures: bool = False
 
 
 @dataclass
 class ShipPlotConfig:
-    """ship 主线图表配置。"""
-
     style: PublicationStyle = field(default_factory=PublicationStyle)
     own_ship_color: str = "#0f6cbd"
     baseline_color: str = "#d97706"
+    third_algo_color: str = "#2f855a"
     risk_threshold_color: str = "#b42318"
-    pareto_cmap: str = "cividis"
+    scalar_cmap: str = "magma"
+    pareto_cmap: str = "viridis"
+    vector_color: str = "#334155"
+    obstacle_facecolor: str = "#cbd5e1"
+    obstacle_edgecolor: str = "#475569"
+    knee_color: str = "#b42318"
+    knee_marker: str = "*"
+    knee_size: float = 180.0
     trajectory_width: float = 2.4
-    target_width: float = 1.7
-    trajectory_figsize: tuple[float, float] = (10.5, 6.4)
+    target_width: float = 1.8
+    overlay_figsize: tuple[float, float] = (11.5, 6.8)
+    route_panel_figsize: tuple[float, float] = (12.6, 8.0)
+    snapshot_figsize: tuple[float, float] = (12.5, 8.0)
+    spatiotemporal_figsize: tuple[float, float] = (10.0, 6.8)
+    control_figsize: tuple[float, float] = (10.0, 8.6)
+    pareto3d_figsize: tuple[float, float] = (8.0, 6.0)
+    pareto_projection_figsize: tuple[float, float] = (11.8, 4.0)
+    parallel_figsize: tuple[float, float] = (11.5, 5.4)
+    radar_figsize: tuple[float, float] = (7.0, 7.0)
+    violin_figsize: tuple[float, float] = (10.8, 5.6)
+    convergence_figsize: tuple[float, float] = (9.0, 5.0)
+    risk_breakdown_figsize: tuple[float, float] = (10.0, 6.8)
+    safety_envelope_figsize: tuple[float, float] = (10.0, 7.0)
+    statistics_figsize: tuple[float, float] = (11.4, 4.8)
+    dashboard_figsize: tuple[float, float] = (15.0, 11.0)
     comparison_figsize: tuple[float, float] = (14.0, 4.8)
-    convergence_figsize: tuple[float, float] = (8.8, 4.8)
-    pareto_figsize: tuple[float, float] = (7.4, 5.4)
     time_series_figsize: tuple[float, float] = (8.8, 4.8)
-    dashboard_figsize: tuple[float, float] = (14.0, 10.0)
     risk_threshold: float = 1.0
+    scalar_grid_resolution: int = 80
+    vector_grid_resolution: int = 18
+    snapshot_alpha: float = 0.35
+    radar_fill_alpha: float = 0.22
+    violin_alpha: float = 0.55
+    inset_zoom_alpha: float = 0.92
+    velocity_arrow_scale: float = 55.0
+    appendix_plots: bool = False
+    interactive_figures: bool = False
+    interactive_html: bool = False
+    interactive_html_include_plotlyjs: str = "cdn"
 
 
 def list_plot_presets() -> list[str]:
-    """列出当前支持的命名风格预设。"""
-
     return sorted(PLOT_STYLE_PRESETS.keys())
 
 
 def build_publication_style(preset: str = "default", **overrides) -> PublicationStyle:
-    """按命名预设构造 PublicationStyle。
-
-    你后续如果想统一调整论文图风格，优先改本文件顶部的 `PLOT_STYLE_PRESETS`。
-    外部代码尽量只写：
-
-    `build_publication_style("paper")`
-    `build_publication_style("ieee", dpi=420)`
-    """
-
     if preset not in PLOT_STYLE_PRESETS:
         raise ValueError(f"Unknown plot preset: {preset}. Available presets: {', '.join(list_plot_presets())}")
     payload = dict(PLOT_STYLE_PRESETS[preset])
@@ -274,13 +194,7 @@ def build_publication_style(preset: str = "default", **overrides) -> Publication
     return PublicationStyle(**payload)
 
 
-def build_benchmark_plot_config(
-    preset: str = "default",
-    style_overrides: dict | None = None,
-    **config_overrides,
-) -> BenchmarkPlotConfig:
-    """按命名预设构造 benchmark 图表配置。"""
-
+def build_benchmark_plot_config(preset: str = "default", style_overrides: dict | None = None, **config_overrides) -> BenchmarkPlotConfig:
     style = build_publication_style(preset, **(style_overrides or {}))
     payload = dict(BENCHMARK_PLOT_PRESETS.get(preset, {}))
     payload.update(config_overrides)
@@ -288,13 +202,7 @@ def build_benchmark_plot_config(
     return BenchmarkPlotConfig(**payload)
 
 
-def build_ship_plot_config(
-    preset: str = "default",
-    style_overrides: dict | None = None,
-    **config_overrides,
-) -> ShipPlotConfig:
-    """按命名预设构造 ship 图表配置。"""
-
+def build_ship_plot_config(preset: str = "default", style_overrides: dict | None = None, **config_overrides) -> ShipPlotConfig:
     style = build_publication_style(preset, **(style_overrides or {}))
     payload = dict(SHIP_PLOT_PRESETS.get(preset, {}))
     payload.update(config_overrides)
@@ -303,10 +211,16 @@ def build_ship_plot_config(
 
 
 def _style_to_rc(style: PublicationStyle) -> dict[str, object]:
+    font_candidates = [style.font_family, *style.chinese_font_fallback]
+    if HAS_MPL:
+        available = {item.name for item in matplotlib.font_manager.fontManager.ttflist}
+        font_candidates = [name for name in font_candidates if name in available] or [style.font_family]
     return {
         "figure.dpi": style.dpi,
         "savefig.dpi": style.dpi,
-        "font.family": style.font_family,
+        "font.family": font_candidates,
+        "font.sans-serif": font_candidates,
+        "axes.unicode_minus": False,
         "axes.titlesize": style.title_size,
         "axes.labelsize": style.label_size,
         "xtick.labelsize": style.tick_size,
@@ -324,11 +238,8 @@ def _style_to_rc(style: PublicationStyle) -> dict[str, object]:
 
 
 def _resolve_style_sheets(style: PublicationStyle) -> list[str]:
-    """Resolve optional matplotlib style sheets before applying local rcParams."""
-
     if not style.use_scienceplots:
         return []
-
     if not HAS_SCIENCEPLOTS:
         warnings.warn(
             "SciencePlots is not installed. Falling back to the built-in matplotlib style configuration.",
@@ -336,15 +247,33 @@ def _resolve_style_sheets(style: PublicationStyle) -> list[str]:
             stacklevel=2,
         )
         return []
-
     return list(style.science_styles)
+
+
+def interactive_bundle_path(output_path: str | Path) -> Path:
+    path = Path(output_path)
+    return path.with_suffix(".fig.pickle")
+
+
+def save_figure_bundle(
+    fig,
+    output_path: str | Path,
+    *,
+    dpi: int,
+    interactive_figures: bool = False,
+) -> None:
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=dpi, bbox_inches="tight")
+    if interactive_figures:
+        bundle_path = interactive_bundle_path(path)
+        with bundle_path.open("wb") as handle:
+            pickle.dump(fig, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 @contextmanager
 def plot_style_context(style: PublicationStyle) -> Iterator[None]:
-    """临时应用论文风格的 matplotlib rcParams。"""
-
-    if not HAS_MPL:  # pragma: no cover - matplotlib absent
+    if not HAS_MPL:  # pragma: no cover
         yield
         return
 
@@ -360,8 +289,8 @@ def plot_style_context(style: PublicationStyle) -> Iterator[None]:
 
 
 __all__ = [
-    "BenchmarkPlotConfig",
     "BENCHMARK_PLOT_PRESETS",
+    "BenchmarkPlotConfig",
     "DEFAULT_BENCHMARK_COLORS",
     "DEFAULT_BENCHMARK_MARKERS",
     "HAS_SCIENCEPLOTS",
@@ -372,6 +301,8 @@ __all__ = [
     "build_benchmark_plot_config",
     "build_publication_style",
     "build_ship_plot_config",
+    "interactive_bundle_path",
     "list_plot_presets",
     "plot_style_context",
+    "save_figure_bundle",
 ]

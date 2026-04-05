@@ -4,7 +4,7 @@ import numpy as np
 
 from kemm.adapters import BenchmarkPriorAdapter
 from kemm.algorithms.kemm import KEMM_DMOEA_Improved
-from kemm.core.adaptive import UCB1Bandit
+from kemm.core.adaptive import AdaptiveOperatorSelector, UCB1Bandit
 from kemm.core.drift import LightweightGPR
 from kemm.core.memory import VAECompressedMemory
 from kemm.core.transfer import GrassmannGeodesicFlow
@@ -112,6 +112,17 @@ class CoreMathSmokeTests(unittest.TestCase):
         )
         self.assertIsNotNone(samples)
         self.assertEqual(samples.shape, (6, 4))
+
+    def test_selector_quality_update_rewards_higher_quality(self):
+        selector = AdaptiveOperatorSelector()
+        selector._prev_ratios = np.array([0.6, 0.2, 0.1, 0.1], dtype=float)
+        selector.update_with_quality(0.2)
+        before = selector.bandit.counts.copy()
+        selector.update_with_quality(0.5)
+        after = selector.bandit.counts.copy()
+
+        self.assertGreater(after[0], before[0])
+        self.assertGreater(selector.bandit.rewards_history[-1], 0.0)
 
 
 if __name__ == "__main__":

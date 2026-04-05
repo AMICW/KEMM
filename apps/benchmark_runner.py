@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import argparse
+import os
 import sys
 import time
 from collections import defaultdict
@@ -39,6 +41,7 @@ from kemm.algorithms import (
 from kemm.benchmark import DynamicTestProblems, PerformanceMetrics
 from kemm.core.types import KEMMConfig as RuntimeKEMMConfig
 from kemm.reporting import build_report_paths, export_benchmark_report
+from reporting_config import build_benchmark_plot_config
 
 try:
     import matplotlib
@@ -49,6 +52,8 @@ try:
     HAS_MPL = True
 except ImportError:
     HAS_MPL = False
+
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 
 class ExperimentConfig:
@@ -108,7 +113,9 @@ class ExperimentRunner:
         self.metrics = PerformanceMetrics()
         self.results: Dict[str, Dict[str, Dict[str, List[float]]]] = {}
         self.igd_curves: Dict[str, Dict[str, List[List[float]]]] = {}
+        self.hv_curves: Dict[str, Dict[str, List[List[float]]]] = {}
         self.algorithm_diagnostics: Dict[str, Dict[str, List[list]]] = {}
+        self.ablation_results: Dict[str, Dict[str, Dict[str, List[float]]]] = {}
 
     def run_all(self):
         """运行所有算法、问题和重复次数的组合实验。"""
@@ -120,10 +127,12 @@ class ExperimentRunner:
         for algo_name, algo_class in self.cfg.ALGORITHMS.items():
             self.results[algo_name] = {}
             self.igd_curves[algo_name] = {}
+            self.hv_curves[algo_name] = {}
             self.algorithm_diagnostics[algo_name] = {}
             for prob_name in self.cfg.PROBLEMS:
                 self.results[algo_name][prob_name] = {"MIGD": [], "SP": [], "MS": [], "TIME": []}
                 self.igd_curves[algo_name][prob_name] = []
+                self.hv_curves[algo_name][prob_name] = []
                 self.algorithm_diagnostics[algo_name][prob_name] = []
                 obj_func, pof_func = self.problems.get_problem(prob_name)
 
@@ -139,18 +148,57 @@ class ExperimentRunner:
                         flush=True,
                     )
 
-                    np.random.seed(run * 1000 + hash(algo_name) % 10000)
+                    seed_offset = sum((index + 1) * ord(ch) for index, ch in enumerate(algo_name)) % 10000
+                    np.random.seed(run * 1000 + seed_offset)
                     result = self._run_single(algo_class, obj_func, pof_func)
                     self.results[algo_name][prob_name]["MIGD"].append(result["migd"])
                     self.results[algo_name][prob_name]["SP"].append(result["sp"])
                     self.results[algo_name][prob_name]["MS"].append(result["ms"])
                     self.results[algo_name][prob_name]["TIME"].append(result["time"])
                     self.igd_curves[algo_name][prob_name].append(result["igd_curve"])
+                    self.hv_curves[algo_name][prob_name].append(result["hv_curve"])
                     self.algorithm_diagnostics[algo_name][prob_name].append(result["change_diagnostics"])
 
         total_time = time.time() - t_start
         print(f"\n  完成, 总耗时 {total_time:.1f}s")
         return self.results
+
+    def run_ablation_all(self):
+        """运行默认消融对比。"""
+
+        self.ablation_results = {}
+        if not self.cfg.ABLATION_ALGORITHMS:
+            return self.ablation_results
+
+        print("\n  运行消融/对照变体...", flush=True)
+        total = len(self.cfg.ABLATION_ALGORITHMS) * len(self.cfg.PROBLEMS) * self.cfg.N_RUNS
+        counter = 0
+        t_start = time.time()
+        for algo_name, algo_class in self.cfg.ABLATION_ALGORITHMS.items():
+            self.ablation_results[algo_name] = {}
+            for prob_name in self.cfg.PROBLEMS:
+                self.ablation_results[algo_name][prob_name] = {"MIGD": [], "SP": [], "MS": [], "TIME": []}
+                obj_func, pof_func = self.problems.get_problem(prob_name)
+                for run in range(self.cfg.N_RUNS):
+                    counter += 1
+                    elapsed = time.time() - t_start
+                    rate = counter / (elapsed + 1e-6)
+                    eta = (total - counter) / (rate + 1e-6)
+                    print(
+                        f"\r  [ABL {counter:3d}/{total}] {algo_name:>12s}|{prob_name:>5s}|R{run+1} | "
+                        f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
+                        end="",
+                        flush=True,
+                    )
+                    seed_offset = sum((index + 1) * ord(ch) for index, ch in enumerate(algo_name)) % 10000
+                    np.random.seed(run * 1000 + seed_offset)
+                    result = self._run_single(algo_class, obj_func, pof_func)
+                    self.ablation_results[algo_name][prob_name]["MIGD"].append(result["migd"])
+                    self.ablation_results[algo_name][prob_name]["SP"].append(result["sp"])
+                    self.ablation_results[algo_name][prob_name]["MS"].append(result["ms"])
+                    self.ablation_results[algo_name][prob_name]["TIME"].append(result["time"])
+        print(f"\n  消融完成, 总耗时 {time.time() - t_start:.1f}s")
+        return self.ablation_results
 
     def _run_single(self, algo_class, obj_func, pof_func):
         """运行一次单算法-单问题实验。
@@ -192,6 +240,7 @@ class ExperimentRunner:
         t0 = time.time()
 
         igd_list: List[float] = []
+        hv_list: List[float] = []
         sp_list: List[float] = []
         ms_list: List[float] = []
         generation = 0
@@ -207,15 +256,17 @@ class ExperimentRunner:
             for _ in range(self.cfg.GENS_PER_CHANGE):
                 algo.evolve_one_gen(obj_func, t)
 
-            generation += self.cfg.TAU_T
+            generation += self.cfg.GENS_PER_CHANGE
             obtained = algo.get_pareto_front()
 
             try:
                 true_pof = pof_func(t=t)
             except TypeError:
                 true_pof = pof_func()
+            ref_point = np.max(np.vstack([true_pof, obtained]), axis=0) + 0.1
 
             igd_list.append(self.metrics.igd(obtained, true_pof))
+            hv_list.append(self.metrics.hypervolume(obtained, ref_point))
             sp_list.append(self.metrics.spacing(obtained))
             ms_list.append(self.metrics.maximum_spread(obtained, true_pof))
 
@@ -225,6 +276,7 @@ class ExperimentRunner:
             "ms": float(np.mean(ms_list)),
             "time": time.time() - t0,
             "igd_curve": igd_list,
+            "hv_curve": hv_list,
             "change_diagnostics": list(getattr(algo, "change_diagnostics_history", [])),
             "algo_instance": algo,
         }
@@ -256,11 +308,13 @@ def wilcoxon_test(ours: list, others: list, alpha: float = 0.05) -> str:
 class ResultPresenter:
     """benchmark 结果展示器。"""
 
-    def __init__(self, results, config, igd_curves=None, algorithm_diagnostics=None):
+    def __init__(self, results, config, igd_curves=None, hv_curves=None, algorithm_diagnostics=None, ablation_results=None):
         self.results = results
         self.cfg = config
         self.igd_curves = igd_curves or {}
+        self.hv_curves = hv_curves or {}
         self.algorithm_diagnostics = algorithm_diagnostics or {}
+        self.ablation_results = ablation_results or {}
         self.our_algo = "KEMM"
 
     def print_tables(self):
@@ -352,7 +406,9 @@ class ResultPresenter:
             results=self.results,
             problems=self.cfg.PROBLEMS,
             igd_curves=self.igd_curves,
+            hv_curves=self.hv_curves,
             diagnostics=self.algorithm_diagnostics,
+            ablation_results=self.ablation_results,
             plot_config=plot_config if plot_config is not None else BenchmarkPlotConfig(),
         )
         generate_all_figures(payload=payload, output_prefix=prefix)
@@ -492,7 +548,12 @@ class ResultPresenter:
         plt.close()
 
 
-def run_benchmark(quick: bool = False, with_jy: bool = False, output_dir: str | None = None):
+def run_benchmark(
+    quick: bool = False,
+    with_jy: bool = False,
+    output_dir: str | None = None,
+    plot_config=None,
+):
     """benchmark 主线常用入口。"""
 
     print("=" * 70)
@@ -521,41 +582,62 @@ def run_benchmark(quick: bool = False, with_jy: bool = False, output_dir: str | 
 
     runner = ExperimentRunner(cfg)
     results = runner.run_all()
+    ablation_results = runner.run_ablation_all()
 
     presenter = ResultPresenter(
         results,
         cfg,
         igd_curves=runner.igd_curves,
+        hv_curves=runner.hv_curves,
         algorithm_diagnostics=runner.algorithm_diagnostics,
+        ablation_results=ablation_results,
     )
     print()
     presenter.print_tables()
     presenter.print_ranking()
-    presenter.plot_all(prefix=figures_prefix)
-    export_benchmark_report(results, cfg, output_root=report_root)
+    presenter.plot_all(prefix=figures_prefix, plot_config=plot_config)
+    export_benchmark_report(results, cfg, output_root=report_root, ablation_results=ablation_results)
     print(f"\n  报告输出目录: {report_root}")
     return results
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run benchmark experiments.")
+    parser.add_argument("--quick", action="store_true", help="Run a lightweight smoke configuration.")
+    parser.add_argument("--full", action="store_true", help="Run the default full benchmark suite.")
+    parser.add_argument("--with-jy", action="store_true", help="Append JY problems to the benchmark suite.")
+    parser.add_argument("--output-dir", default=None, help="Optional output directory.")
+    parser.add_argument("--plot-preset", default="paper", help="Plot preset: default/paper/ieee/nature/thesis.")
+    parser.add_argument("--science-style", default="", help="Comma-separated SciencePlots style tuple.")
+    parser.add_argument("--appendix-plots", action="store_true", help="Export appendix/debug benchmark plots.")
+    parser.add_argument("--interactive-figures", action="store_true", help="Also export interactive matplotlib figure bundles (.fig.pickle).")
+    return parser.parse_args()
 
 
 def main():
     """命令行入口。"""
 
-    args = sys.argv[1:]
-    output_dir = None
-    if "--output-dir" in args:
-        idx = args.index("--output-dir")
-        if idx + 1 < len(args):
-            output_dir = args[idx + 1]
+    args = _parse_args()
+    style_overrides = {}
+    if args.science_style:
+        style_overrides["use_scienceplots"] = True
+        style_overrides["science_styles"] = tuple(part.strip() for part in args.science_style.split(",") if part.strip())
+    plot_config = build_benchmark_plot_config(
+        preset=args.plot_preset,
+        style_overrides=style_overrides,
+        appendix_plots=args.appendix_plots,
+        interactive_figures=args.interactive_figures,
+    )
 
-    if "--full" in args:
-        run_benchmark(quick=False, output_dir=output_dir)
-    elif "--with-jy" in args:
-        run_benchmark(quick=False, with_jy=True, output_dir=output_dir)
-    elif "--quick" in args:
-        run_benchmark(quick=True, output_dir=output_dir)
+    if args.full:
+        run_benchmark(quick=False, output_dir=args.output_dir, plot_config=plot_config)
+    elif args.with_jy:
+        run_benchmark(quick=False, with_jy=True, output_dir=args.output_dir, plot_config=plot_config)
+    elif args.quick:
+        run_benchmark(quick=True, output_dir=args.output_dir, plot_config=plot_config)
     else:
-        run_benchmark(quick=True, output_dir=output_dir)
-        print("\n  使用选项: --quick | --full | --with-jy | --output-dir <path>")
+        run_benchmark(quick=True, output_dir=args.output_dir, plot_config=plot_config)
+        print("\n  使用选项: --quick | --full | --with-jy | --output-dir <path> | --plot-preset <preset>")
 
 
 if __name__ == "__main__":

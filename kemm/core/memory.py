@@ -1,52 +1,8 @@
+"""Compressed elite memory built on a lightweight NumPy VAE implementation.
+
+This module stores historical Pareto-set structure in a compact latent space so
+KEMM can reuse past experience without keeping every raw population snapshot.
 """
-===============================================================================
-compressed_memory.py
-VAE 压缩记忆模块 — 隐空间知识存储与检索
-===============================================================================
-【设计动机】
-  原始 MMTL-DMOEA 将精英解原始坐标存入记忆库:
-    - 随时间膨胀, 每个时刻存 N 个 d 维向量
-    - 无法捕获 Pareto 前沿的本质结构
-    - 检索时只能用欧氏距离, 忽略流形结构
-  
-  KEMM 改进 — 基于 VAE 的隐空间压缩:
-    - Pareto 前沿在决策空间形成 (m-1) 维流形
-    - VAE 学习流形的低维隐表示 z ∈ R^{latent_dim}
-    - 存储量: O(latent_dim) << O(N·d)
-    - 检索: 在隐空间度量相似性, 语义更丰富
-
-
-【VAE 理论基础】
-  证据下界 (ELBO):
-    L = E[log p(x|z)] - β·KL(q(z|x)||p(z))
-  
-  其中:
-    - p(x|z): 解码器 (隐 → 解)
-    - q(z|x): 编码器 (解 → 隐)
-    - p(z) = N(0, I): 先验分布
-    - β: KL 权重 (β-VAE, 控制压缩率)
-  
-  在线更新: 每个时刻用新精英解微调 VAE (增量学习)
-
-
-【参数设计】
-  latent_dim = 8: 对应典型 DMOP 问题的 Pareto 前沿维度
-  hidden_dim = 64: 编码器/解码器的隐层宽度
-  beta = 0.1: 较小的 β 保证重建质量 > 压缩率
-  
-  来源: Higgins et al., "β-VAE", ICLR 2017
-        与 MMTL-DMOEA 记忆机制 (Process 1) 的结合
-
-
-【计算复杂度】
-  编码: O(D·hidden_dim + hidden_dim·latent_dim) = O(D·H)
-  解码: O(latent_dim·hidden_dim + hidden_dim·D) = O(H·D)
-  在线更新: O(n_epochs·N·D·H)
-  
-  远小于原始 SVR 方案: O(ns²·d) = O(900·d)
-===============================================================================
-"""
-
 
 import numpy as np
 from typing import List, Tuple, Optional, Dict
@@ -56,34 +12,8 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
-
-
-# ╔═══════════════════════════════════════════════════════════════════════════╗
-#  轻量级 VAE — 纯 NumPy 实现 (不依赖 PyTorch/TF)
-# ╚═══════════════════════════════════════════════════════════════════════════╝
-
-
 class LightweightVAE:
-    """
-    轻量级变分自编码器 — 纯 NumPy 实现
-    ─────────────────────────────────────────
-    用于在线学习 Pareto 前沿的隐空间表示。
-    
-    网络结构:
-      编码器: D → hidden_dim → (latent_dim, latent_dim)
-                              (均值μ,      对数方差logσ²)
-      解码器: latent_dim → hidden_dim → D
-    
-    激活函数:
-      编码器: tanh (有界, 适合归一化后的解)
-      解码器: linear (回归任务)
-    
-    训练: Adam 优化器 (手动实现) + ELBO 损失
-    
-    说明:
-      选用纯 NumPy 实现是为了减少依赖, 方便在各种环境中部署。
-      如有 PyTorch 可用, 建议替换为 nn.Module 版本以获得更好性能。
-    """
+    """Small NumPy-only beta-VAE used to encode and reconstruct elite-set structure."""
 
 
     def __init__(
@@ -587,36 +517,7 @@ class LightweightVAE:
 
 
 class VAECompressedMemory:
-    """
-    基于 VAE 的压缩记忆库
-    ─────────────────────────────────────────
-    替代原始 MMTL-DMOEA 的 FIFO 原始解存储:
-    
-    原始方案:
-      存储: N 个 d 维向量 (原始解坐标)
-      检索: 按时间顺序或随机
-      问题: 冗余度高, 无法捕获流形结构
-    
-    KEMM 改进方案:
-      存储: VAE 隐码 (latent_dim 维) + 统计摘要
-      检索: 在隐空间按相似度搜索
-      优势: 压缩率 = d/latent_dim, 语义更丰富
-    
-    记忆条目格式:
-      {
-        'latent_mean': z 均值 (latent_dim,)
-        'latent_std': z 标准差 (latent_dim,)
-        'fitness_mean': 适应度均值 (n_obj,)
-        'fitness_std': 适应度标准差 (n_obj,)
-        'fingerprint': 环境指纹 (fp_dim,)
-        'age': 时间戳
-        'raw_elites': 精英原始解 (用于最终解码, 保留少量)
-      }
-    
-    来源: 改进自论文 Process 1, lines 10-14
-          "external storage size C is set to 10×N"
-          但我们将每个条目的存储量降低了 D/latent_dim 倍
-    """
+    """Historical elite archive that retrieves and decodes latent memories for KEMM."""
 
 
     def __init__(

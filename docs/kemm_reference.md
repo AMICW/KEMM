@@ -34,7 +34,7 @@ KEMM 的基本思想是：环境变化后，不是把种群全部丢掉重来，
 从工程角度看，KEMM 主线承担三个任务：
 
 - 给 benchmark 主线提供主要研究对象
-- 给 ship 主线提供可复用的优化核心
+- 给 ship 主线提供可复用的优化核心；当前 ship 默认图包已扩展到 dense harbor route planning、Pareto projection、risk breakdown 与 safety envelope 这类更物理解释型图
 - 给后续消融实验和模块替换提供稳定骨架
 
 ---
@@ -829,3 +829,25 @@ ship 主线并没有重新发明一套算法，而是通过 `ship_simulation/opt
 - 组合式
 - 响应型
 - 可迁移
+
+---
+
+## 21. 推荐图表与实验叙事映射
+
+如果要把 benchmark 主线组织成论文叙事，当前推荐顺序是：
+
+1. 用 `benchmark_metrics_grid.png` 给出主结果
+2. 用 `benchmark_rank_bar.png` 总结综合排名
+3. 用 `benchmark_heatmap.png` 与 `benchmark_wilcoxon.png` 说明问题分布与统计显著性
+4. 用 `benchmark_pairwise_wins.png` 补充逐对比较关系
+5. 用 `benchmark_igd_time.png` 与 `benchmark_hv_time.png` 展示变化过程中的逼近与覆盖恢复
+6. 用 `benchmark_operator_ratios.png`、`benchmark_response_quality.png`、`benchmark_prediction_confidence.png` 分解机制过程量
+7. 用 `benchmark_change_dashboard.png` 做机制总览
+8. 用 `benchmark_ablation.png` 说明模块必要性
+
+`benchmark_migd_bar.png` 现在更适合作为附录/兼容图，而不是默认主图。
+
+对应文档索引：
+
+- 图表表达方式：`docs/figure_catalog.md`
+- 图表参数与模板：`docs/visualization_guide.md`

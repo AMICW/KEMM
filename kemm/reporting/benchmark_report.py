@@ -93,6 +93,7 @@ def _write_markdown(
     metric_rows: List[Dict[str, object]],
     rank_rows: List[Dict[str, object]],
     cfg: Any,
+    ablation_rows: List[Dict[str, object]] | None = None,
 ) -> None:
     """Write a compact Markdown summary."""
 
@@ -133,14 +134,40 @@ def _write_markdown(
                 [
                     str(row["algorithm"]),
                     str(row["problem"]),
-                    f"{row['migd_mean']:.4f} ± {row['migd_std']:.4f}",
-                    f"{row['sp_mean']:.4f} ± {row['sp_std']:.4f}",
-                    f"{row['ms_mean']:.4f} ± {row['ms_std']:.4f}",
-                    f"{row['time_mean']:.4f} ± {row['time_std']:.4f}",
+                    f"{row['migd_mean']:.4f} +/- {row['migd_std']:.4f}",
+                    f"{row['sp_mean']:.4f} +/- {row['sp_std']:.4f}",
+                    f"{row['ms_mean']:.4f} +/- {row['ms_std']:.4f}",
+                    f"{row['time_mean']:.4f} +/- {row['time_std']:.4f}",
                 ]
             )
             + " |"
         )
+
+    if ablation_rows:
+        lines.extend(
+            [
+                "",
+                "## Ablation Summary",
+                "",
+                "| Variant | Problem | MIGD | SP | MS | Time |",
+                "| --- | --- | --- | --- | --- | --- |",
+            ]
+        )
+        for row in ablation_rows:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        str(row["algorithm"]),
+                        str(row["problem"]),
+                        f"{row['migd_mean']:.4f} +/- {row['migd_std']:.4f}",
+                        f"{row['sp_mean']:.4f} +/- {row['sp_std']:.4f}",
+                        f"{row['ms_mean']:.4f} +/- {row['ms_std']:.4f}",
+                        f"{row['time_mean']:.4f} +/- {row['time_std']:.4f}",
+                    ]
+                )
+                + " |"
+            )
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -161,6 +188,7 @@ def export_benchmark_report(
     results: Dict[str, Dict[str, Dict[str, List[float]]]],
     cfg: Any,
     output_root: Path | None = None,
+    ablation_results: Dict[str, Dict[str, Dict[str, List[float]]]] | None = None,
 ) -> Path:
     """Export benchmark results to raw tables and a Markdown report."""
 
@@ -170,9 +198,12 @@ def export_benchmark_report(
 
     metric_rows = _collect_metric_rows(results, cfg)
     rank_rows = _collect_rank_rows(results, cfg)
+    ablation_rows = _collect_metric_rows(ablation_results, cfg) if ablation_results else []
 
     _write_csv(raw_dir / "metrics.csv", metric_rows)
     _write_csv(raw_dir / "ranks.csv", rank_rows)
+    if ablation_rows:
+        _write_csv(raw_dir / "ablation_metrics.csv", ablation_rows)
     _write_json(
         raw_dir / "summary.json",
         {
@@ -186,9 +217,10 @@ def export_benchmark_report(
             },
             "metrics": metric_rows,
             "ranks": rank_rows,
+            "ablation_metrics": ablation_rows,
         },
     )
-    _write_markdown(reports_dir / "summary.md", metric_rows, rank_rows, cfg)
+    _write_markdown(reports_dir / "summary.md", metric_rows, rank_rows, cfg, ablation_rows=ablation_rows)
     return root
 
 

@@ -510,10 +510,10 @@ class ParetoFrontDriftPredictor:
                 pass
 
 # 同时修复 predict_next 中的预测反归一化
-    def predict_next(self, next_time, n_samples=50, var_bounds=None):
-        # ...前面代码不变...
-        # 假设 self.times, self.features 已定义，且 self.feature_dim 已定义
-        # 构造 X_test，假设为 [[next_time]] 作为预测输入
+    def predict_next(self, next_time, n_samples=50, var_bounds=None, anchors=None):
+        if len(self.time_steps) < 3:
+            return np.zeros(self.feature_dim), None
+
         X_test = np.array([[next_time]])
         predicted_mean = np.zeros(self.feature_dim)
         predicted_std = np.ones(self.feature_dim)
@@ -531,9 +531,24 @@ class ParetoFrontDriftPredictor:
             lb, ub = var_bounds
             lb = np.asarray(lb, dtype=float)
             ub = np.asarray(ub, dtype=float)
-            center = 0.5 * (lb + ub)
+            if anchors is not None:
+                anchor_array = np.atleast_2d(np.asarray(anchors, dtype=float))
+                center = np.mean(anchor_array, axis=0)
+                anchor_spread = np.std(anchor_array, axis=0)
+            else:
+                center = 0.5 * (lb + ub)
+                anchor_spread = 0.1 * (ub - lb)
             spread_scale = float(np.clip(np.mean(predicted_std), 0.05, 2.5))
-            spread = (ub - lb) * 0.15 * (1.0 + spread_scale)
+            shift_dim = min(2, len(center), len(predicted_mean))
+            center = center.copy()
+            if shift_dim > 0 and self.features:
+                reference = np.asarray(self.features[-1][:shift_dim], dtype=float)
+                delta = np.asarray(predicted_mean[:shift_dim], dtype=float) - reference
+                if np.any(np.abs(delta) > 0.0):
+                    direction = np.sign(delta)
+                    center[:shift_dim] = center[:shift_dim] + direction * 0.08 * (ub[:shift_dim] - lb[:shift_dim])
+            spread_floor = 0.05 * (ub - lb)
+            spread = np.maximum(anchor_spread, spread_floor) * (1.0 + 0.5 * spread_scale)
             candidate_solutions = center + np.random.randn(n_samples, len(lb)) * spread
             candidate_solutions = np.clip(candidate_solutions, lb, ub)
 

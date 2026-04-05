@@ -1,44 +1,8 @@
+"""Subspace transfer operators used by KEMM after environment changes.
+
+The implementations here build Grassmann geodesic flows and related transfer
+mechanisms for moving candidate solutions across dynamic environments.
 """
-===============================================================================
-geodesic_flow.py
-正确的 Grassmann 流形测地流 (SGF) 实现
-===============================================================================
-【修复背景】
-  原始 KEMM 代码中的 SGF 实现存在根本性错误：
-    错误: P_mid = (1-alpha)*PS + alpha*PT  (线性插值, 非测地线)
-    正确: 需要计算正交补 RS, 通过 SVD 构建真正的 Grassmann 测地流
-
-
-【理论来源】
-  Gong et al., "Geodesic Flow Kernel for Unsupervised Domain Adaptation",
-  CVPR 2012, 公式 (3)-(6)
-  
-  原始 MMTL-DMOEA 论文 Process 3:
-    "φ(k) = PS·U1·Γ(k) − RS·U2·Σ(k)"
-    其中 RS 是 PS 的正交补, U1/U2 来自 SVD 分解
-
-
-【Grassmann 流形的数学背景】
-  Grassmann 流形 G(d, D) 是所有 D 维空间中 d 维子空间的集合。
-  两个子空间 PS, PT ∈ G(d, D) 之间的测地线参数化为:
-  
-    φ(t) = PS·U·cos(t·Θ) + RS·V·sin(t·Θ),  t ∈ [0,1]
-  
-  其中:
-    - SVD: PS^T·PT = U·Σ·V^T  (Σ = cos(Θ))
-    - RS = 正交补空间基底 (满足 PS^T·RS = 0)
-    - Θ = arccos(Σ) 是主角 (principal angles)
-
-
-【计算复杂度】
-  - SVD 分解: O(d³)
-  - 每个中间点投影: O(N·D·d)
-  - 总计: O(d³ + p·N·D·d)  其中 p=5 (中间子空间数)
-  
-  对应论文描述: "constructing geodesic flow: O(d²) and O(1)"
-===============================================================================
-"""
-
 
 import numpy as np
 from typing import List, Tuple, Optional
@@ -48,34 +12,8 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
-
-
-# ╔═══════════════════════════════════════════════════════════════════════════╗
-#  核心类: 正确的 Grassmann 测地流
-# ╚═══════════════════════════════════════════════════════════════════════════╝
-
-
 class GrassmannGeodesicFlow:
-    """
-    正确实现 Grassmann 流形上的测地流迁移
-    ─────────────────────────────────────────
-    修复了原始代码中的三个核心错误:
-    
-    错误1: 使用线性插值替代测地线
-      原始: P_mid = (1-alpha)*PS + alpha*PT
-      修复: 基于 SVD 的正确 Grassmann 测地线参数化
-    
-    错误2: 跳过正交补计算
-      原始: 直接对混合矩阵做 QR
-      修复: 显式计算 RS (PS 的正交补), 满足 PS^T·RS = 0
-    
-    错误3: 主角 (Principal Angles) 未被利用
-      原始: 均匀插值参数 alpha = k/(p+1)
-      修复: 使用 θ_i = arccos(σ_i) 的余弦/正弦插值
-    
-    来源: MMTL-DMOEA 论文 Process 3, 公式 (3)-(6)
-          Gong et al., CVPR 2012
-    """
+    """Constructs intermediate subspaces along a Grassmann geodesic between two fronts."""
 
 
     def __init__(self, n_subspaces: int = 5, jitter: float = 1e-6):
@@ -317,33 +255,7 @@ class GrassmannGeodesicFlow:
 
 
 class ManifoldTransferLearning:
-    """
-    完整流形迁移学习模块
-    ─────────────────────────────────────────
-    整合 LPCA 聚类 + 动态 PCA + 正确 SGF, 实现论文 Process 3 的完整流程
-    
-    Process 3 完整流程:
-      1. d = m − 1  (子空间维度)
-      2. 用 LPCA/KMeans 将 LastBestSol 聚为 L 簇
-      3. for j = 1 to L:
-      4.   PCA(LastBestSol_j) → PS  (源子空间)
-      5.   在 F(x,t) 中生成目标样本 T
-      6.   PCA(T) → PT  (目标子空间)
-      7.   φ(k) = PS·U·cos(k·Θ) + RS·V·sin(k·Θ)  (测地流)
-      8.   for x in LastBestSol_j:
-      9.     投影到 φ(·) 得 x̄
-      10.    x̂ = arg min ||x^T φ(·) − x̄||
-      11.    TransSol ∪= x̂
-    
-    改进点:
-      - 使用正确的 Grassmann 测地流 (修复核心 bug)
-      - PCA 前注入微扰防止数值坍塌
-      - 动态子空间维度 (按累积贡献率 95% 确定 d)
-      - d < 2 时退化为高斯微扰 (鲁棒性保证)
-    
-    参数 (来源论文 Section IV):
-      L=4 (聚类数), p=5 (中间子空间数)
-    """
+    """Transfers archived elite solutions through learned subspace mappings."""
 
 
     def __init__(
@@ -609,19 +521,7 @@ class ManifoldTransferLearning:
 
 
 class MultiSourceTransfer:
-    """
-    多源加权流形迁移
-    ─────────────────────────────────────────
-    KEMM-DMOEA 的核心改进之一:
-      原始 MMTL-DMOEA 仅从单个历史时刻迁移知识。
-      KEMM 从 top-K 相似历史时刻按相似度加权迁移,
-      在环境非稳态时更鲁棒。
-    
-    理论依据:
-      正迁移/负迁移的自动识别 (来源: 论文引用 [32])
-      "positive and negative transfer is automatically identified
-       so as to curb the negative transfer"
-    """
+    """Ranks and combines multiple historical environments for transfer reuse."""
 
 
     def __init__(self, transfer_module: ManifoldTransferLearning):

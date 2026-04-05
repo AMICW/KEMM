@@ -1,89 +1,44 @@
-# AI / 开发者接手说明
+﻿# AI Developer Handoff
 
-本文档是给“新开一个 AI 助手对话后，从零开始也能马上接手仓库”的专用说明。
+本文档给新的 AI 助手和新的开发者一个最短接手路径。
 
-目标不是讲理论，而是直接回答：
+目标不是重复 README，而是明确三件事：
 
-- 这个仓库的用户真实需求是什么
-- 当前架构的意图是什么
-- 改某类功能时应该去哪改
-- 哪些边界不能打破
+1. 真实实现在哪里
+2. 改不同任务时应该落到哪些文件
+3. 哪些边界不能打破
 
-## 1. 用户的核心目标
+---
 
-用户当前的真实需求有三条：
+## 1. 仓库结构
 
-1. 持续优化 KEMM 的算法结构与实验体系。
-2. 把 `ship_simulation` 做成具有物理语义的验证平台，而不是纯 demo。
-3. 让整个仓库足够清晰，未来不管是人还是 AI，都能快速定位并修改对应模块。
+仓库有两条主线：
 
-这意味着你在接手仓库时，不应只关注“能跑”，还要同时关注：
+1. `benchmark`
+   用动态多目标标准测试问题验证 KEMM
+2. `ship_simulation`
+   用偏现实船舶会遇场景验证 KEMM 在物理语义问题上的表现
 
-- 架构清晰度
-- 可扩展性
-- 文档完整度
-- 可视化质量
-- benchmark 与 ship 双主线的一致性
+它是研究代码库，不是单次 demo 仓库。
 
-## 2. 当前架构意图
+---
 
-仓库目前按“双主线统一”设计：
+## 2. 真实实现入口
 
-- benchmark 主线负责理论验证
-- ship 主线负责物理语义验证
-
-共享的关键骨架是：
-
-- `kemm/algorithms/`
-- `kemm/core/`
-- `kemm/adapters/`
-- `reporting_config.py`
-- `apps/reporting/`
-
-用户后续最在意的是：
-
-- 以后继续修改算法时，要很方便
-- 图表层不要因为算法内部重构就一起崩
-- 新助手接手时，不要再从根目录一堆 legacy 文件里猜测真实实现在哪里
-
-## 3. 真实实现位置
-
-请优先从这些文件开始读：
-
-### 3.1 benchmark 主线
+优先修改这些位置：
 
 - `apps/benchmark_runner.py`
+- `apps/ship_runner.py`
 - `apps/reporting/benchmark_visualization.py`
-- `kemm/algorithms/kemm.py`
-- `kemm/adapters/benchmark.py`
-- `kemm/core/types.py`
-- `kemm/core/adaptive.py`
-- `kemm/core/memory.py`
-- `kemm/core/drift.py`
-- `kemm/core/transfer.py`
-
-### 3.2 ship 主线
-
-- `ship_simulation/main_demo.py`
-- `ship_simulation/run_report.py`
-- `ship_simulation/optimizer/problem.py`
-- `ship_simulation/optimizer/kemm_solver.py`
-- `ship_simulation/visualization/report_plots.py`
-- `ship_simulation/visualization/animator.py`
-
-### 3.3 风格与文档
-
+- `kemm/algorithms/*.py`
+- `kemm/adapters/*.py`
+- `kemm/core/*.py`
+- `kemm/benchmark/*.py`
+- `kemm/reporting/*.py`
+- `ship_simulation/*`
 - `reporting_config.py`
-- `README.md`
-- `AGENTS.md`
-- `docs/codebase_reference.md`
-- `docs/kemm_reference.md`
-- `docs/ship_simulation_reference.md`
-- `docs/visualization_guide.md`
 
-## 4. 哪些文件不应优先修改
-
-这些文件主要是兼容层：
+这些文件主要是兼容层，不是新逻辑的首选落点：
 
 - `run_experiments.py`
 - `benchmark_algorithms.py`
@@ -93,82 +48,136 @@
 - `geodesic_flow.py`
 - `pareto_drift.py`
 
-如果用户没有明确要求兼容旧导入路径，不要把新实现重新塞回这些文件。
+---
 
-## 5. 修改任务到文件的映射
+## 3. 改动任务到文件的映射
 
-如果任务是“改算法结构”：
+### 3.1 改 KEMM 主流程
 
-- 先看 `kemm/algorithms/kemm.py`
-- 如果涉及 benchmark-only prior，再看 `kemm/adapters/benchmark.py`
-- 如果涉及子模块机制，再看 `kemm/core/*.py`
+- `kemm/algorithms/kemm.py`
 
-如果任务是“改可视化质量或论文图”：
+### 3.2 改 benchmark-only prior
 
-- 风格参数：`reporting_config.py`
+- `kemm/adapters/benchmark.py`
+
+### 3.3 改 KEMM 子模块
+
+- `kemm/core/adaptive.py`
+- `kemm/core/memory.py`
+- `kemm/core/drift.py`
+- `kemm/core/transfer.py`
+- `kemm/core/types.py`
+
+### 3.4 改 ship 场景和规划
+
+- `ship_simulation/scenario/encounter.py`
+- `ship_simulation/scenario/generator.py`
+- `ship_simulation/optimizer/problem.py`
+- `ship_simulation/optimizer/episode.py`
+- `ship_simulation/optimizer/selection.py`
+- `ship_simulation/core/collision_risk.py`
+- `ship_simulation/core/ship_model.py`
+
+### 3.5 改图表与论文风格
+
 - benchmark 图：`apps/reporting/benchmark_visualization.py`
 - ship 图：`ship_simulation/visualization/report_plots.py`
+- 公共风格：`reporting_config.py`
 
-如果任务是“改 ship 仿真目标或约束”：
+---
 
-- `ship_simulation/optimizer/problem.py`
-- `ship_simulation/core/ship_model.py`
-- `ship_simulation/core/collision_risk.py`
+## 4. 当前 ship 主线状态
 
-如果任务是“改文档或 GitHub 展示”：
+ship 主线当前默认语义是：
 
-- `README.md`
-- `AGENTS.md`
-- `docs/*.md`
+- 偏现实场景
+- 静态障碍 + 动态交通体 + 环境场
+- 滚动重规划 episode
+- 3 主目标优化
+- 额外输出分析指标
+- 核心论文图包默认开启
 
-## 6. 必须保持的接口边界
+关键公共接口：
 
-### 6.1 KEMM 到图表层
-
-不要让 benchmark 图表层重新直接访问算法私有属性。应通过：
-
-- `KEMMChangeDiagnostics`
-- `BenchmarkFigurePayload`
-
-### 6.2 benchmark prior 到通用 KEMM
-
-不要把 benchmark-only prior 重新塞回通用 KEMM 主体。应通过：
-
-- `BenchmarkPriorAdapter`
-
-### 6.3 图表风格到绘图函数
-
-不要把字体、DPI、配色重新散落在各个图函数里。应优先通过：
-
-- `PublicationStyle`
-- `BenchmarkPlotConfig`
+- `EncounterScenario`
+- `PlanningStepResult`
+- `PlanningEpisodeResult`
+- `ExperimentSeries`
 - `ShipPlotConfig`
 
-## 7. 建议的接手顺序
+---
 
-当你第一次进入仓库时，建议按这个顺序理解：
+## 5. 当前 benchmark 主线状态
+
+benchmark 主线已经把图表层与算法层隔离：
+
+- 图表层消费 `BenchmarkFigurePayload`
+- 机制诊断通过 `KEMMChangeDiagnostics`
+- benchmark 图表不应继续直接探测算法私有字段
+
+这条边界要保持住。
+
+---
+
+## 6. 必须遵守的边界
+
+1. benchmark 图表层不直接访问算法私有属性
+2. ship 主线禁止依赖 benchmark-only prior
+3. 绘图参数优先集中在 `reporting_config.py`
+4. 根目录 legacy 文件继续保持薄兼容
+5. 新图和新逻辑不要灌回兼容层
+
+---
+
+## 7. 常用验证命令
+
+```powershell
+python -m unittest discover -s tests -v
+python run_experiments.py --quick --output-dir benchmark_outputs/smoke
+python ship_simulation/run_report.py --quick --scenarios crossing --n-runs 1
+```
+
+---
+
+## 8. 推荐阅读顺序
 
 1. `README.md`
 2. `AGENTS.md`
 3. `docs/codebase_reference.md`
 4. `docs/kemm_reference.md`
 5. `docs/ship_simulation_reference.md`
-6. 再进入具体代码文件
+6. `docs/visualization_guide.md`
 
-## 8. 基础回归命令
+然后再进入具体代码文件。
 
-```bash
-python -m unittest discover -s tests -v
-python run_experiments.py --quick --output-dir benchmark_outputs/smoke
-python ship_simulation/run_report.py
-```
+---
 
-## 9. 典型判断标准
+## 9. 提交前最低检查
 
-当你完成修改后，至少应确认：
+至少确认：
 
-- benchmark 主线还能跑
-- ship 主线还能跑
-- 图表还能生成
-- 结构化 payload 和 diagnostics 没被破坏
-- 文档仍能指出真实实现位置
+- `tests/` 通过
+- benchmark 主线入口还能跑
+- ship 主线入口还能跑
+- 默认报告图能导出
+- 结构化结果对象字段没有被破坏
+- README 和细分文档没有继续引用旧接口或旧图名
+
+---
+
+## 10. 新增图或删图时必须同步更新的文档
+
+只要默认导出图表发生变化，至少同步更新这些文件：
+
+- `README.md`
+- `docs/figure_catalog.md`
+- `docs/visualization_guide.md`
+- `docs/ship_simulation_reference.md`
+- `docs/kemm_reference.md`
+
+原则是：
+
+1. `README.md` 只保留总索引和入口说明
+2. `docs/visualization_guide.md` 说明怎么调图
+3. `docs/figure_catalog.md` 说明每张图表达什么、论文里怎么写
+4. ship 或 benchmark 专题文档负责把图表映射回实验叙事

@@ -94,6 +94,8 @@
   - ship 主线逐模块详细说明。
 - `docs/visualization_guide.md`
   - benchmark 与 ship 图表参数的统一配置说明。
+- `docs/figure_catalog.md`
+  - 当前默认导出图表的论文用途、视觉编码与图注模板索引。
 - `docs/ai_developer_handoff.md`
   - 面向零上下文 AI/开发者接手的说明。
 
@@ -726,8 +728,10 @@
 3. `docs/kemm_reference.md`
 4. `docs/ship_simulation_reference.md`
 5. `docs/formula_audit.md`
-6. `kemm/algorithms/kemm.py`
-7. `apps/benchmark_runner.py`
-8. `ship_simulation/optimizer/problem.py`
-9. `ship_simulation/optimizer/kemm_solver.py`
-10. `ship_simulation/run_report.py`
+6. `docs/visualization_guide.md`
+7. `docs/figure_catalog.md`
+8. `kemm/algorithms/kemm.py`
+9. `apps/benchmark_runner.py`
+10. `ship_simulation/optimizer/problem.py`
+11. `ship_simulation/optimizer/kemm_solver.py`
+12. `ship_simulation/run_report.py`

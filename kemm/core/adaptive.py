@@ -1,95 +1,16 @@
+"""Adaptive operator selection, reward normalization, and change diagnostics.
+
+The classes in this module let KEMM allocate recovery effort across memory,
+prediction, transfer, and random reinitialization after an environment change.
 """
-===============================================================================
-adaptive_operator.py
-MAB 自适应算子选择 — UCB1 策略
-===============================================================================
-【设计动机】
-  原始 KEMM 代码中的比例分配是硬编码的魔法数字:
-    memory_ratio = 0.35   # ← 为什么是 0.35?
-    predict_ratio = 0.35  # ← 纯粹经验
-    transfer_ratio = 0.10 # ← 没有理论依据
-  
-  正确做法: 将各策略视为"臂", 用 MAB 在线学习最优分配比例
-
-
-【MAB 理论基础】
-  多臂赌博机 (Multi-Armed Bandit, MAB):
-    - 每个"臂"代表一种策略 (记忆精英/线性预测/SGF迁移/随机重初始化)
-    - 每次选择后获得奖励信号 (IGD 改善量)
-    - 目标: 最大化累积奖励
-  
-  UCB1 算法 (Upper Confidence Bound):
-    选择 i* = argmax_i [ Q_i + c·√(ln T / N_i) ]
-    
-    其中:
-      Q_i = 臂 i 的平均奖励 (exploitation 利用项)
-      c·√(ln T / N_i) = 探索奖励 (exploration 探索项)
-      T = 总拉动次数, N_i = 臂 i 的拉动次数
-      c = 探索系数 (越大越倾向探索)
-  
-  UCB1 的理论保证:
-    期望悔恨 E[Regret(T)] = O(√(K·T·ln T))
-    其中 K 是臂的数量
-  
-  来源: Auer et al., "Finite-time Analysis of the Multiarmed
-        Bandit Problem", Machine Learning 2002
-        Fialho et al., "Adaptive Operator Selection for
-        Optimization", GECCO 2010
-
-
-【奖励设计】
-  奖励信号: IGD 前后的相对改善量
-    r = max(0, (IGD_before - IGD_after) / (IGD_before + ε))
-  
-  滑动窗口: 仅使用最近 W 次奖励计算平均值 (适应非平稳环境)
-  
-  奖励归一化: 使用 z-score 归一化后映射到 [0, 1]
-
-
-【臂的定义】
-  臂0: 记忆精英直接使用 (Memory Elite)
-       - 来源: 论文 Process 2 的 FindBestSol
-  臂1: 线性预测 (KF/PPS 风格)
-       - 来源: 论文引用 [22][23]
-  臂2: SGF 流形迁移 (Transfer)
-       - 来源: 论文 Process 3
-  臂3: 随机重初始化
-       - 来源: RI-DMOEA 基线
-
-
-【参数设置】
-  n_arms = 4   (对应 4 种策略)
-  window = 10  (滑动窗口大小)
-  c = 0.5      (探索系数)
-===============================================================================
-"""
-
 
 import numpy as np
 from typing import List, Tuple, Optional
 from collections import deque
 
 
-
-
-# ╔═══════════════════════════════════════════════════════════════════════════╗
-#  UCB1 多臂赌博机
-# ╚═══════════════════════════════════════════════════════════════════════════╝
-
-
 class UCB1Bandit:
-    """
-    UCB1 多臂赌博机
-    ─────────────────────────────────────────
-    实现标准 UCB1 算法, 用于在线学习最优策略比例。
-    
-    与标准 MAB 的区别:
-      - 输出的不是单个离散动作, 而是 K 个臂的连续概率分布
-      - 使用 softmax 将 UCB 值转换为概率
-      - 支持滑动窗口奖励 (适应非平稳问题)
-    
-    来源: Auer et al., Machine Learning 2002
-    """
+    """Sliding-window UCB1 bandit with softmax ratio output for operator allocation."""
 
 
     def __init__(
@@ -290,30 +211,7 @@ class UCB1Bandit:
 
 
 class AdaptiveOperatorSelector:
-    """
-    自适应算子选择器
-    ─────────────────────────────────────────
-    整合 UCB1 MAB 和 IGD 反馈信号, 提供完整的自适应算子选择功能。
-    
-    使用方式:
-      1. 调用 get_ratios() 获取本次的分配比例
-      2. 用对应比例分配种群初始化策略
-      3. 进化若干代后调用 update_with_igd() 提供反馈
-      4. MAB 自动学习最优分配
-    
-    4 种策略 (4 个"臂"):
-      臂0 - MEMORY:   使用记忆库中的精英解 (FindBestSol)
-      臂1 - PREDICT:  线性/KF 预测 (质心外推)
-      臂2 - TRANSFER: SGF 流形迁移 (Transfer)
-      臂3 - REINIT:   随机重初始化 (探索保底)
-    
-    来源:
-      Fialho et al., "Adaptive Operator Selection for Optimization",
-      GECCO 2010 — 将 AOS 用于进化算法
-      
-      本文扩展: 将 AOS 用于动态多目标优化的
-                环境响应策略选择 (而非交叉/变异算子)
-    """
+    """High-level selector that updates operator rewards from post-change response quality."""
 
 
     # 策略索引常量
@@ -417,17 +315,26 @@ class AdaptiveOperatorSelector:
         来源: 改进思路来自 Fialho et al. GECCO 2010
               "the improvement of solution quality is used as reward"
         """
+        self._update_with_relative_improvement(current_igd, higher_is_better=False)
+
+    def update_with_quality(self, current_quality: float):
+        """用“数值越大越好”的质量代理值更新 MAB。"""
+
+        self._update_with_relative_improvement(current_quality, higher_is_better=True)
+
+    def _update_with_relative_improvement(self, current_value: float, *, higher_is_better: bool) -> None:
+        """统一处理“越小越好/越大越好”两类反馈信号。"""
+
         if self._prev_igd is None:
-            self._prev_igd = current_igd
+            self._prev_igd = current_value
             return
 
-
-        # 计算 IGD 相对改善量
-        if self._prev_igd > 1e-10:
-            reward = max(0.0, (self._prev_igd - current_igd) / self._prev_igd)
+        previous_value = float(self._prev_igd)
+        scale = max(abs(previous_value), 1e-10)
+        if higher_is_better:
+            reward = max(0.0, (current_value - previous_value) / scale)
         else:
-            reward = 0.0
-
+            reward = max(0.0, (previous_value - current_value) / scale)
 
         reward = float(np.clip(reward, 0.0, 1.0))
 
@@ -449,7 +356,7 @@ class AdaptiveOperatorSelector:
                 self.bandit.update(arm_idx, credited_reward)
 
 
-        self._prev_igd = current_igd
+        self._prev_igd = current_value
         self.update_count += 1
 
 
@@ -507,29 +414,7 @@ class AdaptiveOperatorSelector:
 
 
 class ParetoFrontDriftDetector:
-    """
-    Pareto 前沿漂移检测器
-    ─────────────────────────────────────────
-    替代原始 KEMM 中用 R² 检测线性度的方法。
-    
-    原始方法的问题:
-      R² 是对质心轨迹的线性拟合度量, 但:
-      1. 质心线性不代表 Pareto 前沿线性漂移
-      2. R² 对周期性变化 (如 sin(t)) 给出极低值,
-         但此时知识实际上可以迁移
-      3. 忽略了 Pareto 前沿形状的变化 (宽/窄/弯曲)
-    
-    改进方案: Wasserstein 距离 + 形状特征
-      - 用 Pareto 前沿的多维统计特征检测变化幅度
-      - 用自回归模型预测下一时刻 PF 特征
-      - 结合 IGD 历史评估迁移效果
-    
-    来源:
-      思路来自 PPS 的自回归预测 (论文引用 [22]):
-        "predicts the next center point by an autoregressive model
-         using a series of center points"
-      扩展到 Pareto 前沿整体特征的预测
-    """
+    """Classifies environment changes from Pareto-front movement statistics."""
 
 
     def __init__(self, window: int = 6):

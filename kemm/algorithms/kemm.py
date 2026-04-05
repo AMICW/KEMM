@@ -189,7 +189,7 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
         self.population, self.fitness = self.env_selection(candidate_pop, candidate_fit, self.pop_size)
 
         response_quality = self._estimate_response_quality()
-        self._operator_selector.update_with_igd(response_quality)
+        self._operator_selector.update_with_quality(response_quality)
 
         fronts = self.fast_nds(self.fitness)
         selected_front_size = len(fronts[0]) if fronts else 0
@@ -345,10 +345,11 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
         if confidence <= self.config.prediction_confidence_threshold or len(self._centroid_history) < 2:
             return np.clip(predicted[:n_predict], self.lb, self.ub)
 
-        _, gp_candidates = self._drift_predictor.predict_next(
+        predicted_feature, gp_candidates = self._drift_predictor.predict_next(
             float(self._time_step),
             n_samples=max(n_predict, self.config.prediction_min_pool),
             var_bounds=(self.lb, self.ub),
+            anchors=elite_archive if elite_archive is not None and len(elite_archive) > 0 else self.population,
         )
         if gp_candidates is None:
             return np.clip(predicted[:n_predict], self.lb, self.ub)
@@ -365,7 +366,12 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
 
         pred_pool = np.clip(np.vstack(pred_pool), self.lb, self.ub)
         pred_fit = obj_func(pred_pool, t)
-        selected, _ = self.env_selection(pred_pool, pred_fit, min(n_predict, len(pred_pool)))
+        selected = self._select_prediction_candidates(
+            pred_pool=pred_pool,
+            pred_fit=pred_fit,
+            predicted_feature=predicted_feature,
+            n_select=n_predict,
+        )
         return selected
 
     def _build_transfer_candidates(self, obj_func, t: float, n_transfer: int) -> list[np.ndarray]:
@@ -442,6 +448,42 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
         if n_need <= 0:
             return []
         return [np.random.uniform(self.lb, self.ub, (n_need, self.n_var))]
+
+    def _select_prediction_candidates(
+        self,
+        *,
+        pred_pool: np.ndarray,
+        pred_fit: np.ndarray,
+        predicted_feature: np.ndarray,
+        n_select: int,
+    ) -> np.ndarray:
+        """按预测的前沿位置优先保留更匹配的候选。"""
+
+        n_keep = min(n_select, len(pred_pool))
+        if n_keep <= 0:
+            return pred_pool[:0]
+
+        target_dim = min(self.n_obj, 2, pred_fit.shape[1], len(predicted_feature))
+        if target_dim <= 0:
+            selected, _ = self.env_selection(pred_pool, pred_fit, n_keep)
+            return selected
+
+        target = np.asarray(predicted_feature[:target_dim], dtype=float)
+        objective_distance = np.linalg.norm(pred_fit[:, :target_dim] - target, axis=1)
+        fronts = self.fast_nds(pred_fit)
+        selected_idx: list[int] = []
+        for front in fronts:
+            ordered_front = sorted(front, key=lambda idx: (objective_distance[idx], float(np.sum(pred_fit[idx]))))
+            if len(selected_idx) + len(ordered_front) <= n_keep:
+                selected_idx.extend(ordered_front)
+            else:
+                selected_idx.extend(ordered_front[: n_keep - len(selected_idx)])
+                break
+
+        if len(selected_idx) < n_keep:
+            remaining = [idx for idx in np.argsort(objective_distance) if int(idx) not in selected_idx]
+            selected_idx.extend(int(idx) for idx in remaining[: n_keep - len(selected_idx)])
+        return pred_pool[np.asarray(selected_idx[:n_keep], dtype=int)]
 
     def _estimate_response_quality(self) -> float:
         """估计当前变化响应质量。"""

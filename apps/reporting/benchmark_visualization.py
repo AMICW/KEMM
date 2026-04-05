@@ -14,7 +14,7 @@ from typing import Dict, Iterable, List, Sequence
 import numpy as np
 
 from kemm.core.types import KEMMChangeDiagnostics
-from reporting_config import BenchmarkPlotConfig, plot_style_context
+from reporting_config import BenchmarkPlotConfig, plot_style_context, save_figure_bundle
 
 try:
     import matplotlib
@@ -41,6 +41,7 @@ class BenchmarkFigurePayload:
     results: Dict[str, Dict[str, Dict[str, List[float]]]]
     problems: Sequence[str]
     igd_curves: Dict[str, Dict[str, List[List[float]]]] | None = None
+    hv_curves: Dict[str, Dict[str, List[List[float]]]] | None = None
     diagnostics: Dict[str, Dict[str, List[List[KEMMChangeDiagnostics]]]] | None = None
     ablation_results: Dict[str, Dict[str, Dict[str, List[float]]]] | None = None
     plot_config: BenchmarkPlotConfig = field(default_factory=BenchmarkPlotConfig)
@@ -197,7 +198,7 @@ class PerformanceComparisonPlots:
                 ax.set_xticklabels(algos if row == 2 else [], rotation=35)
                 ax.grid(True, alpha=0.25, axis="y")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
     @staticmethod
@@ -233,7 +234,7 @@ class PerformanceComparisonPlots:
         for idx in range(len(problems), len(axes)):
             axes[idx].set_visible(False)
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
     @staticmethod
@@ -260,7 +261,7 @@ class PerformanceComparisonPlots:
         fig.colorbar(image, ax=ax, label="Normalized MIGD (0=best)")
         ax.set_title("Benchmark MIGD Heatmap")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
     @staticmethod
@@ -282,7 +283,7 @@ class PerformanceComparisonPlots:
         ax.set_title("Average Rank Comparison")
         ax.grid(True, alpha=0.25, axis="x")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
 
@@ -334,7 +335,55 @@ class ProcessAnalysisPlots:
         for idx in range(len(problems), len(axes)):
             axes[idx].set_visible(False)
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
+        plt.close(fig)
+
+    @staticmethod
+    def plot_hv_convergence(hv_curves, problems, save_path="fig_B1b_hv_convergence.png", plot_config: BenchmarkPlotConfig | None = None):
+        if not HAS_MPL or not hv_curves:
+            return
+        cfg = _resolve_plot_config(plot_config)
+        _ensure_parent(Path(save_path))
+        algos = list(hv_curves.keys())
+        n_cols = min(3, len(problems))
+        n_rows = (len(problems) + n_cols - 1) // n_cols
+        fig, axes = plt.subplots(
+            n_rows,
+            n_cols,
+            figsize=(cfg.metric_panel_width * n_cols, cfg.metrics_grid_height * n_rows),
+        )
+        axes = np.atleast_1d(axes).ravel()
+        for idx, problem in enumerate(problems):
+            ax = axes[idx]
+            for algo in algos:
+                mean_curve, std_curve = _mean_curve(hv_curves.get(algo, {}).get(problem, []))
+                if mean_curve.size == 0:
+                    continue
+                x = np.arange(1, len(mean_curve) + 1)
+                ax.plot(
+                    x,
+                    mean_curve,
+                    label=algo,
+                    color=_color_for(algo, cfg),
+                    marker=_marker_for(algo, cfg),
+                    linewidth=cfg.style.emphasis_line_width if algo == "KEMM" else cfg.style.line_width,
+                )
+                ax.fill_between(
+                    x,
+                    mean_curve - std_curve,
+                    mean_curve + std_curve,
+                    color=_color_for(algo, cfg),
+                    alpha=cfg.style.band_alpha,
+                )
+            ax.set_title(problem, fontweight="bold")
+            ax.set_xlabel("Change Index")
+            ax.set_ylabel("HV")
+            ax.grid(True, alpha=0.25)
+            ax.legend(fontsize=7)
+        for idx in range(len(problems), len(axes)):
+            axes[idx].set_visible(False)
+        fig.tight_layout()
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
     @staticmethod
@@ -356,7 +405,7 @@ class ProcessAnalysisPlots:
         ax.grid(True, alpha=0.25)
         ax.legend(loc="best")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
     @staticmethod
@@ -375,7 +424,7 @@ class ProcessAnalysisPlots:
         ax.set_ylabel("Response Quality")
         ax.grid(True, alpha=0.25)
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
     @staticmethod
@@ -395,7 +444,7 @@ class ProcessAnalysisPlots:
         ax.set_ylim(0.0, 1.05)
         ax.grid(True, alpha=0.25)
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
 
@@ -437,7 +486,7 @@ class StatisticalAnalysisPlots:
         fig.colorbar(image, ax=ax, label="p-value")
         ax.set_title("Wilcoxon Rank-Sum Test: KEMM vs Others")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
     @staticmethod
@@ -471,7 +520,7 @@ class StatisticalAnalysisPlots:
         fig.colorbar(image, ax=ax, label="wins on MIGD")
         ax.set_title("Pairwise Win Matrix")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
 
@@ -522,7 +571,7 @@ class AlgorithmMechanismPlots:
         ax_change.grid(True, alpha=0.25)
 
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
 
@@ -546,7 +595,7 @@ class AblationStudyPlots:
         ax.set_title("Ablation Comparison")
         ax.grid(True, alpha=0.25, axis="y")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
 
@@ -555,6 +604,7 @@ def generate_all_figures(
     results=None,
     problems=None,
     igd_curves=None,
+    hv_curves=None,
     diagnostics=None,
     ablation_results=None,
     kemm_algo_instance=None,
@@ -581,6 +631,7 @@ def generate_all_figures(
             results=results or {},
             problems=problems or [],
             igd_curves=igd_curves,
+            hv_curves=hv_curves,
             diagnostics=diagnostics,
             ablation_results=ablation_results,
             plot_config=plot_config or BenchmarkPlotConfig(),
@@ -591,12 +642,6 @@ def generate_all_figures(
     prefix = Path(output_prefix)
     cfg = payload.plot_config
     with plot_style_context(cfg.style):
-        PerformanceComparisonPlots.plot_migd_main_table(
-            payload.results,
-            payload.problems,
-            save_path=f"{prefix}_migd_bar.png",
-            plot_config=cfg,
-        )
         PerformanceComparisonPlots.plot_three_metrics_grid(
             payload.results,
             payload.problems,
@@ -621,6 +666,13 @@ def generate_all_figures(
                 payload.igd_curves,
                 payload.problems,
                 save_path=f"{prefix}_igd_time.png",
+                plot_config=cfg,
+            )
+        if payload.hv_curves:
+            ProcessAnalysisPlots.plot_hv_convergence(
+                payload.hv_curves,
+                payload.problems,
+                save_path=f"{prefix}_hv_time.png",
                 plot_config=cfg,
             )
         if payload.diagnostics:
@@ -663,6 +715,14 @@ def generate_all_figures(
                 payload.ablation_results,
                 payload.problems,
                 save_path=f"{prefix}_ablation.png",
+                plot_config=cfg,
+            )
+
+        if cfg.appendix_plots:
+            PerformanceComparisonPlots.plot_migd_main_table(
+                payload.results,
+                payload.problems,
+                save_path=f"{prefix}_migd_bar.png",
                 plot_config=cfg,
             )
 

@@ -1,24 +1,4 @@
-﻿"""批量运行船舶仿真实验并导出报告。
-
-这个脚本对应 ship 主线的“正式实验入口”。和 `main_demo.py` 的区别是：
-
-- `main_demo.py` 更偏向单次演示和交互观察
-- `run_report.py` 更偏向批量生成结果、图表和可归档的实验报告
-
-当前它会对内置的三类经典会遇场景逐个运行：
-
-1. `head_on`
-2. `crossing`
-3. `overtaking`
-
-每个场景同时运行：
-
-- KEMM 求解器
-- 随机搜索 baseline
-
-然后把结果统一写入 `raw/`, `figures/`, `reports/` 三个目录，保持与 benchmark
-主线一致的输出习惯。
-"""
+﻿"""批量运行 ship episode，并导出论文风格报告。"""
 
 from __future__ import annotations
 
@@ -27,180 +7,250 @@ import csv
 import json
 import sys
 import time
+from collections import defaultdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterable, List
 
 import numpy as np
 
-# 兼容两种运行方式：
-# 1. `python -m ship_simulation.run_report`
-# 2. `python ship_simulation/run_report.py`
-# 后者会把 `ship_simulation/` 当成脚本目录加入 sys.path，导致仓库根目录下的
-# `reporting_config.py` 无法直接导入，因此这里在脚本直跑时补回仓库根路径。
 if __package__ in (None, ""):
     repo_root = Path(__file__).resolve().parents[1]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
-from reporting_config import ShipPlotConfig
+from reporting_config import ShipPlotConfig, build_ship_plot_config
 from ship_simulation.config import DemoConfig, build_default_config, build_default_demo_config
-from ship_simulation.main_demo import random_search, select_demo_solution
-from ship_simulation.optimizer.interface import ShipOptimizerInterface
-from ship_simulation.optimizer.kemm_solver import ShipKEMMOptimizer
+from ship_simulation.optimizer.episode import PlanningEpisodeResult, RollingHorizonPlanner
 from ship_simulation.scenario.generator import ScenarioGenerator
 from ship_simulation.visualization import (
     ExperimentSeries,
-    save_convergence_plot,
+    save_control_time_series,
+    save_convergence_statistics,
+    save_distribution_violin,
+    save_dynamic_avoidance_snapshots,
+    save_environment_overlay,
     save_normalized_objective_bars,
-    save_pareto_scatter,
+    save_parallel_coordinates,
+    save_pareto_3d_with_knee,
+    save_pareto_projection_panel,
+    save_radar_chart,
+    save_risk_breakdown_time_series,
     save_risk_bars,
-    save_risk_time_series,
-    save_speed_profiles,
+    save_route_planning_panel,
+    save_run_statistics_panel,
+    save_safety_envelope_plot,
+    save_spatiotemporal_plot,
     save_summary_dashboard,
-    save_trajectory_comparison,
 )
 
 
 def _build_quick_demo_config() -> DemoConfig:
-    """构造一个用于快速冒烟验证的轻量配置。"""
-
     demo = build_default_demo_config()
-    demo.random_search_samples = 24
-    demo.kemm.pop_size = 40
-    demo.kemm.generations = 16
-    demo.kemm.refresh_interval = 4
+    demo.random_search_samples = 20
+    demo.evolutionary_baseline_pop_size = 22
+    demo.evolutionary_baseline_generations = 10
+    demo.n_runs = 1
+    demo.kemm.pop_size = 28
+    demo.kemm.generations = 12
+    demo.kemm.initial_guess_copies = 4
+    demo.episode.local_horizon = 320.0
+    demo.episode.execution_horizon = 160.0
+    demo.episode.max_replans = 8
     return demo
 
 
-def _pick_random_baseline(
-    interface: ShipOptimizerInterface,
-    demo_config: DemoConfig,
-) -> tuple[np.ndarray, np.ndarray, object]:
-    """运行随机搜索 baseline，并挑出一个用于展示和对比的代表解。
-
-    随机搜索会先生成很多候选解，再按加权分数排序。这里优先返回“已经到达终点”
-    的方案，避免把物理上不完整的轨迹误当作示例结果。
-    """
-
-    decisions, objectives = random_search(
-        interface=interface,
-        n_samples=demo_config.random_search_samples,
-        seed=demo_config.random_search_seed,
-    )
-    spread = np.ptp(objectives, axis=0)
-    normalized = (objectives - objectives.min(axis=0)) / (spread + 1e-9)
-    scores = 0.4 * normalized[:, 0] + 0.25 * normalized[:, 1] + 0.35 * normalized[:, 2]
-    ranked_indices = np.argsort(scores)
-
-    selected = None
-    result = None
-    for idx in ranked_indices:
-        candidate = decisions[int(idx)]
-        candidate_result = interface.simulate(candidate)
-        if candidate_result.reached_goal:
-            selected = candidate
-            result = candidate_result
-            break
-
-    if result is None:
-        selected = select_demo_solution(decisions, objectives)
-        result = interface.simulate(selected)
-
-    return decisions, objectives, result
+def _weighted_score(objectives: np.ndarray) -> float:
+    weights = np.array([0.4, 0.25, 0.35], dtype=float)
+    return float(np.dot(objectives, weights))
 
 
-def _scenario_result_dict(
-    scenario_key: str,
-    optimizer_name: str,
-    result,
-    extra: Dict[str, object] | None = None,
-) -> Dict[str, object]:
-    """把单场景结果拍平成适合 CSV/JSON/Markdown 导出的字典。"""
-
-    payload = {
-        "scenario_key": scenario_key,
-        "scenario_name": result.own_trajectory.__class__.__name__,
-        "optimizer": optimizer_name,
-        "fuel": float(result.objectives[0]),
-        "time": float(result.objectives[1]),
-        "risk_objective": float(result.objectives[2]),
-        "max_risk": float(result.risk.max_risk),
-        "mean_risk": float(result.risk.mean_risk),
-        "intrusion_time": float(result.risk.intrusion_time),
-        "reached_goal": bool(result.reached_goal),
-        "terminal_distance": float(result.terminal_distance),
+def _optimizer_display_name(name: str) -> str:
+    mapping = {
+        "kemm": "KEMM",
+        "nsga_style": "NSGA-style",
+        "random": "Random",
     }
-    if extra:
-        payload.update(extra)
-    return payload
+    return mapping.get(name, name)
 
 
-def _write_summary_csv(output_path: Path, rows: List[Dict[str, object]]) -> None:
-    """把结构化结果写成 CSV。"""
+def _episode_row(scenario_key: str, optimizer_name: str, run_index: int, episode: PlanningEpisodeResult) -> dict[str, object]:
+    metrics = episode.analysis_metrics
+    knee = episode.knee_objectives if episode.knee_objectives is not None else np.array([np.nan, np.nan, np.nan], dtype=float)
+    return {
+        "scenario_key": scenario_key,
+        "scenario_name": episode.scenario_name,
+        "optimizer": _optimizer_display_name(optimizer_name),
+        "run": int(run_index),
+        "fuel": float(episode.final_evaluation.objectives[0]),
+        "time": float(episode.final_evaluation.objectives[1]),
+        "risk": float(episode.final_evaluation.objectives[2]),
+        "max_risk": float(episode.final_evaluation.risk.max_risk),
+        "mean_risk": float(episode.final_evaluation.risk.mean_risk),
+        "intrusion_time": float(episode.final_evaluation.risk.intrusion_time),
+        "reached_goal": bool(episode.final_evaluation.reached_goal),
+        "terminal_distance": float(episode.final_evaluation.terminal_distance),
+        "minimum_clearance": float(metrics.get("minimum_clearance", 0.0)),
+        "minimum_static_clearance": float(metrics.get("minimum_static_clearance", 0.0)),
+        "minimum_ship_distance": float(metrics.get("minimum_ship_distance", 0.0)),
+        "minimum_dcpa": float(metrics.get("minimum_dcpa", 0.0)),
+        "minimum_tcpa": float(metrics.get("minimum_tcpa", 0.0)),
+        "smoothness": float(metrics.get("smoothness", 0.0)),
+        "control_effort": float(metrics.get("control_effort", 0.0)),
+        "heading_variation": float(metrics.get("heading_variation", 0.0)),
+        "max_yaw_rate": float(metrics.get("max_yaw_rate", 0.0)),
+        "max_commanded_yaw_rate": float(metrics.get("max_commanded_yaw_rate", 0.0)),
+        "runtime": float(metrics.get("runtime", 0.0)),
+        "planning_steps": float(metrics.get("planning_steps", 0.0)),
+        "pareto_size": float(len(episode.pareto_objectives)),
+        "snapshot_count": float(len(episode.snapshots)),
+        "knee_index": float(episode.knee_index) if episode.knee_index is not None else np.nan,
+        "knee_fuel": float(knee[0]),
+        "knee_time": float(knee[1]),
+        "knee_risk": float(knee[2]),
+        "terminated_reason": episode.terminated_reason,
+    }
 
+
+def _aggregate_rows(rows: List[dict[str, object]]) -> list[dict[str, object]]:
+    grouped: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+    for row in rows:
+        grouped[(str(row["scenario_key"]), str(row["optimizer"]))].append(row)
+    aggregates = []
+    numeric_keys = [
+        "fuel",
+        "time",
+        "risk",
+        "max_risk",
+        "mean_risk",
+        "intrusion_time",
+        "terminal_distance",
+        "minimum_clearance",
+        "minimum_static_clearance",
+        "minimum_ship_distance",
+        "minimum_dcpa",
+        "minimum_tcpa",
+        "smoothness",
+        "control_effort",
+        "heading_variation",
+        "max_yaw_rate",
+        "max_commanded_yaw_rate",
+        "runtime",
+        "planning_steps",
+        "pareto_size",
+        "snapshot_count",
+        "knee_index",
+        "knee_fuel",
+        "knee_time",
+        "knee_risk",
+    ]
+    for (scenario_key, optimizer), items in grouped.items():
+        payload = {
+            "scenario_key": scenario_key,
+            "optimizer": optimizer,
+            "n_runs": len(items),
+            "success_rate": float(np.mean([1.0 if item["reached_goal"] else 0.0 for item in items])),
+        }
+        for key in numeric_keys:
+            values = np.asarray([float(item[key]) for item in items], dtype=float)
+            payload[f"{key}_mean"] = float(np.mean(values))
+            payload[f"{key}_std"] = float(np.std(values))
+        aggregates.append(payload)
+    return aggregates
+
+
+def _representative_episode(episodes: Iterable[PlanningEpisodeResult]) -> PlanningEpisodeResult:
+    episode_list = list(episodes)
+    if not episode_list:
+        raise ValueError("At least one episode is required.")
+
+    successful = [episode for episode in episode_list if episode.final_evaluation.reached_goal]
+    candidates = successful or episode_list
+    objective_matrix = np.asarray([episode.final_evaluation.objectives for episode in candidates], dtype=float)
+    center = np.median(objective_matrix, axis=0)
+    span = np.ptp(objective_matrix, axis=0)
+    weighted_scores = np.asarray([_weighted_score(episode.final_evaluation.objectives) for episode in candidates], dtype=float)
+    target_score = float(np.median(weighted_scores))
+
+    def ranking_key(index: int) -> tuple[float, float, float]:
+        normalized_distance = float(np.linalg.norm((objective_matrix[index] - center) / (span + 1e-9)))
+        weighted_gap = abs(float(weighted_scores[index]) - target_score)
+        runtime = float(candidates[index].analysis_metrics.get("runtime", 0.0))
+        return normalized_distance, weighted_gap, runtime
+
+    return candidates[min(range(len(candidates)), key=ranking_key)]
+
+
+def _repeated_statistics(episodes: Iterable[PlanningEpisodeResult]) -> dict[str, float]:
+    episode_list = list(episodes)
+    if not episode_list:
+        return {}
+    keys = [
+        "fuel",
+        "time",
+        "risk",
+        "minimum_clearance",
+        "minimum_static_clearance",
+        "minimum_ship_distance",
+        "minimum_dcpa",
+        "minimum_tcpa",
+        "runtime",
+        "planning_steps",
+    ]
+    stats: dict[str, float] = {"n_runs": float(len(episode_list))}
+    success = np.asarray([1.0 if episode.final_evaluation.reached_goal else 0.0 for episode in episode_list], dtype=float)
+    stats["success_rate"] = float(np.mean(success))
+    stats["success_rate_std"] = float(np.std(success))
+    objective_index = {"fuel": 0, "time": 1, "risk": 2}
+    for key in keys:
+        if key in objective_index:
+            idx = objective_index[key]
+            values = np.asarray([float(episode.final_evaluation.objectives[idx]) for episode in episode_list], dtype=float)
+        else:
+            values = np.asarray([float(episode.analysis_metrics.get(key, 0.0)) for episode in episode_list], dtype=float)
+        stats[f"{key}_mean"] = float(np.mean(values))
+        stats[f"{key}_std"] = float(np.std(values))
+    return stats
+
+
+def _write_csv(output_path: Path, rows: list[dict[str, object]]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         return
-
-    fieldnames = list(rows[0].keys())
     with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
 
 
-
-def _write_summary_markdown(output_path: Path, rows: List[Dict[str, object]]) -> None:
-    """把结构化结果写成便于汇报的 Markdown 表格。"""
-
+def _write_json(output_path: Path, payload: object) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    if not rows:
-        output_path.write_text("# Ship Simulation Report\n\nNo rows generated.\n", encoding="utf-8")
-        return
+    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    headers = [
-        "scenario_key",
-        "optimizer",
-        "fuel",
-        "time",
-        "risk_objective",
-        "max_risk",
-        "mean_risk",
-        "intrusion_time",
-        "reached_goal",
-        "terminal_distance",
-    ]
+
+def _write_markdown(output_path: Path, aggregates: list[dict[str, object]]) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Ship Simulation Report",
         "",
-        "| " + " | ".join(headers) + " |",
-        "| " + " | ".join(["---"] * len(headers)) + " |",
+        "| Scenario | Optimizer | Fuel | Time | Risk | Clearance | Ship Dist | Runtime | Knee (F/T/R) | Success Rate |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
     ]
-    for row in rows:
-        values = []
-        for key in headers:
-            value = row[key]
-            if isinstance(value, float):
-                values.append(f"{value:.4f}")
-            else:
-                values.append(str(value))
-        lines.append("| " + " | ".join(values) + " |")
-    lines.append("")
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+    for row in aggregates:
+        lines.append(
+            "| {scenario_key} | {optimizer} | {fuel_mean:.3f} | {time_mean:.3f} | {risk_mean:.3f} | {minimum_clearance_mean:.3f} | {minimum_ship_distance_mean:.3f} | {runtime_mean:.3f} | ({knee_fuel_mean:.2f}, {knee_time_mean:.2f}, {knee_risk_mean:.2f}) | {success_rate:.2%} |".format(**row)
+        )
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+
+def _science_style_tuple(value: str | None) -> tuple[str, ...] | None:
+    if not value:
+        return None
+    return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
 def generate_report(output_root: Path | None = None, plot_config: ShipPlotConfig | None = None) -> Path:
-    """运行内置船舶场景并导出完整报告目录。
-
-    目录结构固定为：
-
-    - `raw/`：原始数值结果
-    - `figures/`：图表
-    - `reports/`：Markdown 摘要
-    """
-
     config = build_default_config()
     return generate_report_with_config(
         config=config,
@@ -217,12 +267,12 @@ def generate_report_with_config(
     demo_config: DemoConfig,
     output_root: Path | None = None,
     plot_config: ShipPlotConfig | None = None,
-    scenario_keys: List[str] | None = None,
+    scenario_keys: list[str] | None = None,
     verbose: bool = True,
+    n_runs: int | None = None,
 ) -> Path:
-    """使用显式配置运行 ship 批量报告。"""
-
-    plot_config = plot_config or ShipPlotConfig()
+    plot_config = plot_config or build_ship_plot_config(demo_config.plot_preset, appendix_plots=demo_config.appendix_plots)
+    scenario_keys = scenario_keys or ["head_on", "crossing", "overtaking", "harbor_clutter"]
     generator = ScenarioGenerator(config)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     root = output_root or Path("ship_simulation/outputs") / f"report_{timestamp}"
@@ -233,13 +283,11 @@ def generate_report_with_config(
     figures_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    scenario_keys = scenario_keys or ["head_on", "crossing", "overtaking"]
-    summary_rows: List[Dict[str, object]] = []
-    kemm_objectives = []
-    random_objectives = []
-    kemm_risks = []
-    random_risks = []
-    scenario_names = []
+    algorithms = ["kemm", "nsga_style", "random"]
+    run_count = int(n_runs or demo_config.n_runs)
+    scenario_rows: list[dict[str, object]] = []
+    aggregate_payload: dict[str, dict[str, list[PlanningEpisodeResult]]] = defaultdict(dict)
+    step_payload: dict[str, dict[str, list[dict[str, object]]]] = defaultdict(dict)
     t0 = time.time()
 
     if verbose:
@@ -247,181 +295,187 @@ def generate_report_with_config(
         print("This command exports figures to disk; it does not open interactive animation windows.", flush=True)
         print(f"Output directory: {root}", flush=True)
         print(f"Scenarios: {', '.join(scenario_keys)}", flush=True)
+        print(f"Algorithms: {', '.join(algorithms)} | Runs per algorithm: {run_count}", flush=True)
 
-    for index, scenario_key in enumerate(scenario_keys, start=1):
-        if verbose:
-            print(f"[{index}/{len(scenario_keys)}] Building scenario `{scenario_key}`...", flush=True)
+    for scenario_index, scenario_key in enumerate(scenario_keys, start=1):
         scenario = generator.generate(scenario_key)
-        interface = ShipOptimizerInterface(scenario=scenario, config=config)
-
-        # KEMM 是主算法；随机搜索作为轻量 baseline，帮助判断问题是否真的存在优化空间。
         if verbose:
-            print(f"[{index}/{len(scenario_keys)}] Running KEMM optimizer...", flush=True)
-        kemm_result = ShipKEMMOptimizer(interface=interface, demo_config=demo_config).optimize()
-        if verbose:
-            print(f"[{index}/{len(scenario_keys)}] Running random baseline...", flush=True)
-        _, _, random_eval = _pick_random_baseline(interface, demo_config)
+            print(f"[{scenario_index}/{len(scenario_keys)}] Scenario `{scenario_key}`", flush=True)
+        aggregate_payload[scenario_key] = {}
+        step_payload[scenario_key] = {}
+        for algorithm in algorithms:
+            episodes: list[PlanningEpisodeResult] = []
+            for run_index in range(run_count):
+                run_demo = replace(
+                    demo_config,
+                    random_search_seed=demo_config.random_search_seed + run_index,
+                    kemm=replace(demo_config.kemm, seed=demo_config.kemm.seed + run_index),
+                )
+                planner = RollingHorizonPlanner(scenario=scenario, config=config, demo_config=run_demo)
+                episode = planner.run(optimizer_name=algorithm)
+                episodes.append(episode)
+                scenario_rows.append(_episode_row(scenario_key, algorithm, run_index, episode))
+                step_payload[scenario_key].setdefault(algorithm, []).append(
+                    {
+                        "run": run_index,
+                        "optimizer": _optimizer_display_name(algorithm),
+                        "terminated_reason": episode.terminated_reason,
+                        "pareto_size": int(len(episode.pareto_objectives)),
+                        "knee_index": episode.knee_index,
+                        "knee_objectives": episode.knee_objectives.tolist() if episode.knee_objectives is not None else None,
+                        "analysis_metrics": dict(episode.analysis_metrics),
+                        "snapshots": [
+                            {
+                                "time_s": snapshot.time_s,
+                                "own_position": snapshot.own_position.tolist(),
+                                "target_positions": [position.tolist() for position in snapshot.target_positions],
+                                "risk": snapshot.risk,
+                                "minimum_clearance": snapshot.minimum_clearance,
+                            }
+                            for snapshot in episode.snapshots
+                        ],
+                        "steps": [
+                            {
+                                "step_index": step.step_index,
+                                "start_time": step.start_time,
+                                "runtime": step.runtime_s,
+                                "objectives": step.selected_evaluation.objectives.tolist(),
+                                "terminal_distance": step.selected_evaluation.terminal_distance,
+                                "risk_max": step.selected_evaluation.risk.max_risk,
+                                "pareto_size": int(len(step.pareto_objectives)),
+                            }
+                            for step in episode.steps
+                        ],
+                    }
+                )
+                if verbose:
+                    print(f"  - {_optimizer_display_name(algorithm):>10s} run {run_index + 1}/{run_count}: fuel={episode.final_evaluation.objectives[0]:.2f}, time={episode.final_evaluation.objectives[1]:.2f}, risk={episode.final_evaluation.objectives[2]:.3f}", flush=True)
+            aggregate_payload[scenario_key][algorithm] = episodes
 
-        scenario_names.append(scenario.name)
-        kemm_objectives.append(kemm_result.best_evaluation.objectives)
-        random_objectives.append(random_eval.objectives)
-        kemm_risks.append(
-            [
-                kemm_result.best_evaluation.risk.max_risk,
-                kemm_result.best_evaluation.risk.mean_risk,
-                kemm_result.best_evaluation.risk.intrusion_time,
-            ]
-        )
-        random_risks.append(
-            [
-                random_eval.risk.max_risk,
-                random_eval.risk.mean_risk,
-                random_eval.risk.intrusion_time,
-            ]
-        )
-
-        # 可视化层统一消费 ExperimentSeries，尽量不直接依赖求解器内部数据结构。
-        series = [
+        best_series = [
             ExperimentSeries(
                 label="KEMM",
-                result=kemm_result.best_evaluation,
+                episode=_representative_episode(aggregate_payload[scenario_key]["kemm"]),
                 color=plot_config.own_ship_color,
-                history=kemm_result.history,
-                pareto_objectives=kemm_result.pareto_objectives,
+                histories=[episode.convergence_history for episode in aggregate_payload[scenario_key]["kemm"]],
+                distribution_metrics=[episode.analysis_metrics for episode in aggregate_payload[scenario_key]["kemm"]],
+                repeated_statistics=_repeated_statistics(aggregate_payload[scenario_key]["kemm"]),
+            ),
+            ExperimentSeries(
+                label="NSGA-style",
+                episode=_representative_episode(aggregate_payload[scenario_key]["nsga_style"]),
+                color=plot_config.third_algo_color,
+                histories=[episode.convergence_history for episode in aggregate_payload[scenario_key]["nsga_style"]],
+                distribution_metrics=[episode.analysis_metrics for episode in aggregate_payload[scenario_key]["nsga_style"]],
+                repeated_statistics=_repeated_statistics(aggregate_payload[scenario_key]["nsga_style"]),
             ),
             ExperimentSeries(
                 label="Random",
-                result=random_eval,
+                episode=_representative_episode(aggregate_payload[scenario_key]["random"]),
                 color=plot_config.baseline_color,
+                histories=[episode.convergence_history for episode in aggregate_payload[scenario_key]["random"]],
+                distribution_metrics=[episode.analysis_metrics for episode in aggregate_payload[scenario_key]["random"]],
+                repeated_statistics=_repeated_statistics(aggregate_payload[scenario_key]["random"]),
             ),
         ]
+        histories_by_label = {series.label: series.histories for series in best_series}
+        metrics_by_label = {series.label: series.distribution_metrics for series in best_series}
 
-        prefix = figures_dir / scenario_key
-        if verbose:
-            print(f"[{index}/{len(scenario_keys)}] Saving figures for `{scenario_key}`...", flush=True)
-        save_trajectory_comparison(prefix.with_name(f"{scenario_key}_trajectory.png"), scenario, series, plot_config=plot_config)
-        save_risk_time_series(prefix.with_name(f"{scenario_key}_risk_series.png"), scenario.name, series, plot_config=plot_config)
-        save_speed_profiles(prefix.with_name(f"{scenario_key}_speed_profile.png"), scenario.name, series, plot_config=plot_config)
-        save_summary_dashboard(prefix.with_name(f"{scenario_key}_dashboard.png"), scenario, series, plot_config=plot_config)
-        save_convergence_plot(
-            prefix.with_name(f"{scenario_key}_kemm_convergence.png"),
-            scenario.name,
-            kemm_result.history,
-            plot_config=plot_config,
-        )
-        save_pareto_scatter(
-            prefix.with_name(f"{scenario_key}_kemm_pareto.png"),
-            scenario.name,
-            kemm_result.pareto_objectives,
-            plot_config=plot_config,
-        )
+        save_environment_overlay(figures_dir / f"{scenario_key}_environment_overlay.png", scenario, best_series, plot_config=plot_config)
+        save_route_planning_panel(figures_dir / f"{scenario_key}_route_planning_panel.png", scenario, best_series, plot_config=plot_config)
+        save_dynamic_avoidance_snapshots(figures_dir / f"{scenario_key}_snapshots.png", scenario, best_series[0].episode, plot_config=plot_config)
+        save_spatiotemporal_plot(figures_dir / f"{scenario_key}_spatiotemporal.png", scenario, best_series[0].episode, plot_config=plot_config)
+        save_control_time_series(figures_dir / f"{scenario_key}_control_timeseries.png", scenario.name, best_series[0].episode, plot_config=plot_config)
+        save_pareto_3d_with_knee(figures_dir / f"{scenario_key}_pareto3d.png", scenario.name, best_series[0].episode, plot_config=plot_config)
+        save_pareto_projection_panel(figures_dir / f"{scenario_key}_pareto_projection.png", scenario.name, best_series[0].episode, plot_config=plot_config)
+        save_risk_breakdown_time_series(figures_dir / f"{scenario_key}_risk_breakdown.png", scenario.name, best_series[0].episode, plot_config=plot_config)
+        save_safety_envelope_plot(figures_dir / f"{scenario_key}_safety_envelope.png", scenario.name, best_series[0].episode, plot_config=plot_config)
+        save_parallel_coordinates(figures_dir / f"{scenario_key}_parallel.png", scenario.name, best_series, plot_config=plot_config)
+        save_radar_chart(figures_dir / f"{scenario_key}_radar.png", scenario.name, best_series, plot_config=plot_config)
+        save_convergence_statistics(figures_dir / f"{scenario_key}_convergence.png", scenario.name, histories_by_label, plot_config=plot_config)
+        save_distribution_violin(figures_dir / f"{scenario_key}_distribution.png", scenario.name, metrics_by_label, plot_config=plot_config)
+        save_run_statistics_panel(figures_dir / f"{scenario_key}_run_statistics.png", scenario.name, best_series, plot_config=plot_config)
+        save_summary_dashboard(figures_dir / f"{scenario_key}_dashboard.png", scenario, best_series, histories_by_label=histories_by_label, metrics_by_label=metrics_by_label, plot_config=plot_config)
 
-        summary_rows.append(
-            _scenario_result_dict(
-                scenario_key,
-                "KEMM",
-                kemm_result.best_evaluation,
-                {
-                    "scenario_name": scenario.name,
-                    "pareto_size": int(len(kemm_result.pareto_decisions)),
-                },
-            )
-        )
-        summary_rows.append(
-            _scenario_result_dict(
-                scenario_key,
-                "Random",
-                random_eval,
-                {
-                    "scenario_name": scenario.name,
-                    "pareto_size": 0,
-                },
-            )
-        )
+    aggregates = _aggregate_rows(scenario_rows)
+    _write_csv(raw_dir / "summary.csv", scenario_rows)
+    _write_csv(raw_dir / "aggregate_summary.csv", aggregates)
+    _write_json(raw_dir / "summary.json", {"runs": scenario_rows, "aggregates": aggregates})
+    _write_json(raw_dir / "planning_steps.json", step_payload)
+    _write_markdown(reports_dir / "summary.md", aggregates)
 
-        if verbose:
-            elapsed = time.time() - t0
-            print(
-                f"[{index}/{len(scenario_keys)}] Finished `{scenario_key}` in {elapsed:.1f}s "
-                f"(best risk={kemm_result.best_evaluation.risk.max_risk:.4f}).",
-                flush=True,
-            )
-
-    kemm_objectives_arr = np.asarray(kemm_objectives, dtype=float)
-    random_objectives_arr = np.asarray(random_objectives, dtype=float)
-    kemm_risks_arr = np.asarray(kemm_risks, dtype=float)
-    random_risks_arr = np.asarray(random_risks, dtype=float)
-
-    # 这两张图用于横向比较多个场景下的总体表现。
-    save_normalized_objective_bars(
-        figures_dir / "overall_normalized_objectives.png",
-        scenario_names,
-        kemm_objectives_arr,
-        random_objectives_arr,
-        plot_config=plot_config,
-    )
-    save_risk_bars(
-        figures_dir / "overall_risk_bars.png",
-        scenario_names,
-        kemm_risks_arr,
-        random_risks_arr,
-        plot_config=plot_config,
-    )
-
-    _write_summary_csv(raw_dir / "summary.csv", summary_rows)
-    _write_summary_markdown(reports_dir / "summary.md", summary_rows)
-    (raw_dir / "summary.json").write_text(
-        json.dumps(summary_rows, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    # 附录图只保留旧柱状对比图，不再作为默认主图。
+    if plot_config.appendix_plots:
+        scenario_names = scenario_keys
+        kemm_objectives = np.asarray([
+            _representative_episode(aggregate_payload[key]["kemm"]).final_evaluation.objectives for key in scenario_keys
+        ], dtype=float)
+        random_objectives = np.asarray([
+            _representative_episode(aggregate_payload[key]["random"]).final_evaluation.objectives for key in scenario_keys
+        ], dtype=float)
+        kemm_risks = np.asarray([
+            [
+                _representative_episode(aggregate_payload[key]["kemm"]).final_evaluation.risk.max_risk,
+                _representative_episode(aggregate_payload[key]["kemm"]).final_evaluation.risk.mean_risk,
+                _representative_episode(aggregate_payload[key]["kemm"]).final_evaluation.risk.intrusion_time,
+            ]
+            for key in scenario_keys
+        ], dtype=float)
+        random_risks = np.asarray([
+            [
+                _representative_episode(aggregate_payload[key]["random"]).final_evaluation.risk.max_risk,
+                _representative_episode(aggregate_payload[key]["random"]).final_evaluation.risk.mean_risk,
+                _representative_episode(aggregate_payload[key]["random"]).final_evaluation.risk.intrusion_time,
+            ]
+            for key in scenario_keys
+        ], dtype=float)
+        save_normalized_objective_bars(figures_dir / "appendix_objective_bars.png", scenario_names, kemm_objectives, random_objectives, plot_config=plot_config)
+        save_risk_bars(figures_dir / "appendix_risk_bars.png", scenario_names, kemm_risks, random_risks, plot_config=plot_config)
 
     if verbose:
-        print(f"Ship simulation report generated in {time.time() - t0:.1f}s: {root}", flush=True)
-
+        print(f"Finished in {time.time() - t0:.1f}s. Report directory: {root}", flush=True)
     return root
 
 
 def _parse_args() -> argparse.Namespace:
-    """解析命令行参数。"""
-
-    parser = argparse.ArgumentParser(
-        description="Run ship-simulation batch reports and export figures/tables.",
-    )
-    parser.add_argument(
-        "--quick",
-        action="store_true",
-        help="Run a smaller smoke-test configuration for faster feedback.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=None,
-        help="Optional output root directory. Defaults to ship_simulation/outputs/report_<timestamp>.",
-    )
-    parser.add_argument(
-        "--scenarios",
-        nargs="+",
-        choices=["head_on", "crossing", "overtaking"],
-        default=None,
-        help="Optional subset of scenarios to run.",
-    )
+    parser = argparse.ArgumentParser(description="Generate ship simulation report.")
+    parser.add_argument("--quick", action="store_true", help="Run a lightweight smoke configuration.")
+    parser.add_argument("--plot-preset", default="paper", help="Plot preset: default/paper/ieee/nature/thesis.")
+    parser.add_argument("--science-style", default="", help="Comma-separated SciencePlots style tuple, e.g. science,ieee,no-latex.")
+    parser.add_argument("--n-runs", type=int, default=None, help="Number of repeated runs per algorithm and scenario.")
+    parser.add_argument("--scenarios", nargs="*", default=None, help="Scenario keys to run.")
+    parser.add_argument("--appendix-plots", action="store_true", help="Also export legacy appendix-style plots.")
+    parser.add_argument("--interactive-figures", action="store_true", help="Also export interactive matplotlib figure bundles (.fig.pickle).")
+    parser.add_argument("--interactive-html", action="store_true", help="Also export interactive HTML for supported 3D plots.")
     return parser.parse_args()
 
 
 def main() -> None:
-    """命令行入口。"""
-
     args = _parse_args()
     config = build_default_config()
-    demo = _build_quick_demo_config() if args.quick else build_default_demo_config()
-    report_dir = generate_report_with_config(
+    demo_config = _build_quick_demo_config() if args.quick else build_default_demo_config()
+    demo_config.plot_preset = args.plot_preset
+    demo_config.appendix_plots = bool(args.appendix_plots)
+    style_overrides = {}
+    science_tuple = _science_style_tuple(args.science_style)
+    if science_tuple is not None:
+        style_overrides["use_scienceplots"] = True
+        style_overrides["science_styles"] = science_tuple
+    plot_config = build_ship_plot_config(
+        args.plot_preset,
+        style_overrides=style_overrides,
+        appendix_plots=args.appendix_plots,
+        interactive_figures=args.interactive_figures,
+        interactive_html=args.interactive_html,
+    )
+    generate_report_with_config(
         config=config,
-        demo_config=demo,
-        output_root=args.output_dir,
+        demo_config=demo_config,
+        plot_config=plot_config,
         scenario_keys=args.scenarios,
         verbose=True,
+        n_runs=args.n_runs,
     )
-    print(f"Final report directory: {report_dir}", flush=True)
 
 
 if __name__ == "__main__":

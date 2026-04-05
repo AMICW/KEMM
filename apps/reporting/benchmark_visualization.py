@@ -197,7 +197,7 @@ class PerformanceComparisonPlots:
                 ax.set_xticklabels(algos if row == 2 else [], rotation=35)
                 ax.grid(True, alpha=0.25, axis="y")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
     @staticmethod
@@ -233,7 +233,7 @@ class PerformanceComparisonPlots:
         for idx in range(len(problems), len(axes)):
             axes[idx].set_visible(False)
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
     @staticmethod
@@ -260,7 +260,7 @@ class PerformanceComparisonPlots:
         fig.colorbar(image, ax=ax, label="Normalized MIGD (0=best)")
         ax.set_title("Benchmark MIGD Heatmap")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
     @staticmethod
@@ -282,7 +282,7 @@ class PerformanceComparisonPlots:
         ax.set_title("Average Rank Comparison")
         ax.grid(True, alpha=0.25, axis="x")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
 
@@ -334,7 +334,7 @@ class ProcessAnalysisPlots:
         for idx in range(len(problems), len(axes)):
             axes[idx].set_visible(False)
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
     @staticmethod
@@ -356,7 +356,7 @@ class ProcessAnalysisPlots:
         ax.grid(True, alpha=0.25)
         ax.legend(loc="best")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
     @staticmethod
@@ -375,7 +375,7 @@ class ProcessAnalysisPlots:
         ax.set_ylabel("Response Quality")
         ax.grid(True, alpha=0.25)
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
     @staticmethod
@@ -395,7 +395,7 @@ class ProcessAnalysisPlots:
         ax.set_ylim(0.0, 1.05)
         ax.grid(True, alpha=0.25)
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
 
@@ -437,7 +437,7 @@ class StatisticalAnalysisPlots:
         fig.colorbar(image, ax=ax, label="p-value")
         ax.set_title("Wilcoxon Rank-Sum Test: KEMM vs Others")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
     @staticmethod
@@ -471,7 +471,7 @@ class StatisticalAnalysisPlots:
         fig.colorbar(image, ax=ax, label="wins on MIGD")
         ax.set_title("Pairwise Win Matrix")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
 
@@ -522,7 +522,7 @@ class AlgorithmMechanismPlots:
         ax_change.grid(True, alpha=0.25)
 
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
 
@@ -546,7 +546,7 @@ class AblationStudyPlots:
         ax.set_title("Ablation Comparison")
         ax.grid(True, alpha=0.25, axis="y")
         fig.tight_layout()
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        fig.savefig(save_path, dpi=cfg.style.dpi, bbox_inches="tight")
         plt.close(fig)
 
 

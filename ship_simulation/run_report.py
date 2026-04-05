@@ -22,13 +22,26 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
+import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
+
+# 兼容两种运行方式：
+# 1. `python -m ship_simulation.run_report`
+# 2. `python ship_simulation/run_report.py`
+# 后者会把 `ship_simulation/` 当成脚本目录加入 sys.path，导致仓库根目录下的
+# `reporting_config.py` 无法直接导入，因此这里在脚本直跑时补回仓库根路径。
+if __package__ in (None, ""):
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
 from reporting_config import ShipPlotConfig
 from ship_simulation.config import DemoConfig, build_default_config, build_default_demo_config
@@ -47,6 +60,17 @@ from ship_simulation.visualization import (
     save_summary_dashboard,
     save_trajectory_comparison,
 )
+
+
+def _build_quick_demo_config() -> DemoConfig:
+    """构造一个用于快速冒烟验证的轻量配置。"""
+
+    demo = build_default_demo_config()
+    demo.random_search_samples = 24
+    demo.kemm.pop_size = 40
+    demo.kemm.generations = 16
+    demo.kemm.refresh_interval = 4
+    return demo
 
 
 def _pick_random_baseline(
@@ -178,7 +202,26 @@ def generate_report(output_root: Path | None = None, plot_config: ShipPlotConfig
     """
 
     config = build_default_config()
-    demo = build_default_demo_config()
+    return generate_report_with_config(
+        config=config,
+        demo_config=build_default_demo_config(),
+        output_root=output_root,
+        plot_config=plot_config,
+        scenario_keys=None,
+        verbose=True,
+    )
+
+
+def generate_report_with_config(
+    config,
+    demo_config: DemoConfig,
+    output_root: Path | None = None,
+    plot_config: ShipPlotConfig | None = None,
+    scenario_keys: List[str] | None = None,
+    verbose: bool = True,
+) -> Path:
+    """使用显式配置运行 ship 批量报告。"""
+
     plot_config = plot_config or ShipPlotConfig()
     generator = ScenarioGenerator(config)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -190,21 +233,34 @@ def generate_report(output_root: Path | None = None, plot_config: ShipPlotConfig
     figures_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    scenario_keys = ["head_on", "crossing", "overtaking"]
+    scenario_keys = scenario_keys or ["head_on", "crossing", "overtaking"]
     summary_rows: List[Dict[str, object]] = []
     kemm_objectives = []
     random_objectives = []
     kemm_risks = []
     random_risks = []
     scenario_names = []
+    t0 = time.time()
 
-    for scenario_key in scenario_keys:
+    if verbose:
+        print("Ship simulation batch report started.", flush=True)
+        print("This command exports figures to disk; it does not open interactive animation windows.", flush=True)
+        print(f"Output directory: {root}", flush=True)
+        print(f"Scenarios: {', '.join(scenario_keys)}", flush=True)
+
+    for index, scenario_key in enumerate(scenario_keys, start=1):
+        if verbose:
+            print(f"[{index}/{len(scenario_keys)}] Building scenario `{scenario_key}`...", flush=True)
         scenario = generator.generate(scenario_key)
         interface = ShipOptimizerInterface(scenario=scenario, config=config)
 
         # KEMM 是主算法；随机搜索作为轻量 baseline，帮助判断问题是否真的存在优化空间。
-        kemm_result = ShipKEMMOptimizer(interface=interface, demo_config=demo).optimize()
-        _, _, random_eval = _pick_random_baseline(interface, demo)
+        if verbose:
+            print(f"[{index}/{len(scenario_keys)}] Running KEMM optimizer...", flush=True)
+        kemm_result = ShipKEMMOptimizer(interface=interface, demo_config=demo_config).optimize()
+        if verbose:
+            print(f"[{index}/{len(scenario_keys)}] Running random baseline...", flush=True)
+        _, _, random_eval = _pick_random_baseline(interface, demo_config)
 
         scenario_names.append(scenario.name)
         kemm_objectives.append(kemm_result.best_evaluation.objectives)
@@ -241,6 +297,8 @@ def generate_report(output_root: Path | None = None, plot_config: ShipPlotConfig
         ]
 
         prefix = figures_dir / scenario_key
+        if verbose:
+            print(f"[{index}/{len(scenario_keys)}] Saving figures for `{scenario_key}`...", flush=True)
         save_trajectory_comparison(prefix.with_name(f"{scenario_key}_trajectory.png"), scenario, series, plot_config=plot_config)
         save_risk_time_series(prefix.with_name(f"{scenario_key}_risk_series.png"), scenario.name, series, plot_config=plot_config)
         save_speed_profiles(prefix.with_name(f"{scenario_key}_speed_profile.png"), scenario.name, series, plot_config=plot_config)
@@ -281,6 +339,14 @@ def generate_report(output_root: Path | None = None, plot_config: ShipPlotConfig
             )
         )
 
+        if verbose:
+            elapsed = time.time() - t0
+            print(
+                f"[{index}/{len(scenario_keys)}] Finished `{scenario_key}` in {elapsed:.1f}s "
+                f"(best risk={kemm_result.best_evaluation.risk.max_risk:.4f}).",
+                flush=True,
+            )
+
     kemm_objectives_arr = np.asarray(kemm_objectives, dtype=float)
     random_objectives_arr = np.asarray(random_objectives, dtype=float)
     kemm_risks_arr = np.asarray(kemm_risks, dtype=float)
@@ -309,9 +375,54 @@ def generate_report(output_root: Path | None = None, plot_config: ShipPlotConfig
         encoding="utf-8",
     )
 
+    if verbose:
+        print(f"Ship simulation report generated in {time.time() - t0:.1f}s: {root}", flush=True)
+
     return root
 
 
+def _parse_args() -> argparse.Namespace:
+    """解析命令行参数。"""
+
+    parser = argparse.ArgumentParser(
+        description="Run ship-simulation batch reports and export figures/tables.",
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Run a smaller smoke-test configuration for faster feedback.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Optional output root directory. Defaults to ship_simulation/outputs/report_<timestamp>.",
+    )
+    parser.add_argument(
+        "--scenarios",
+        nargs="+",
+        choices=["head_on", "crossing", "overtaking"],
+        default=None,
+        help="Optional subset of scenarios to run.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    """命令行入口。"""
+
+    args = _parse_args()
+    config = build_default_config()
+    demo = _build_quick_demo_config() if args.quick else build_default_demo_config()
+    report_dir = generate_report_with_config(
+        config=config,
+        demo_config=demo,
+        output_root=args.output_dir,
+        scenario_keys=args.scenarios,
+        verbose=True,
+    )
+    print(f"Final report directory: {report_dir}", flush=True)
+
+
 if __name__ == "__main__":
-    report_dir = generate_report()
-    print(f"Ship simulation report generated: {report_dir}")
+    main()

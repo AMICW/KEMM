@@ -15,10 +15,20 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Tuple
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+# 兼容两种运行方式：
+# 1. `python -m ship_simulation.main_demo`
+# 2. `python ship_simulation/main_demo.py`
+if __package__ in (None, ""):
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
 from ship_simulation.config import (
     DemoConfig,

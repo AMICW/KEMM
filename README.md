@@ -133,6 +133,7 @@
 - `numpy`
 - `scipy`
 - `matplotlib`
+- `SciencePlots`
 
 ### 5.3 使用 `venv`
 
@@ -300,6 +301,9 @@ KEMM 当前的核心机制包括：
 - `PublicationStyle`
 - `BenchmarkPlotConfig`
 - `ShipPlotConfig`
+- `build_publication_style(...)`
+- `build_benchmark_plot_config(...)`
+- `build_ship_plot_config(...)`
 
 你可以显式调整：
 
@@ -310,6 +314,14 @@ KEMM 当前的核心机制包括：
 - heatmap colormap
 - dashboard / panel / rank bar 的尺寸
 - ship 风险阈值和 Pareto colormap
+
+目前内置预设有：
+
+- `default`
+- `paper`
+- `ieee`
+- `nature`
+- `thesis`
 
 ### 10.2 benchmark 图表接口
 
@@ -323,10 +335,12 @@ benchmark 图表层使用：
 ### 10.3 示例：自定义 benchmark 图表风格
 
 ```python
-from apps.reporting import BenchmarkFigurePayload, BenchmarkPlotConfig, PublicationStyle, generate_all_figures
+from apps.reporting import BenchmarkFigurePayload, generate_all_figures
+from reporting_config import build_benchmark_plot_config
 
-plot_config = BenchmarkPlotConfig(
-    style=PublicationStyle(dpi=360, title_size=15, label_size=12),
+plot_config = build_benchmark_plot_config(
+    preset="ieee",
+    style_overrides={"dpi": 420},
     highlight_color="#8b1e3f",
     metric_panel_width=4.8,
 )
@@ -345,11 +359,12 @@ generate_all_figures(payload=payload, output_prefix="benchmark_outputs/custom/be
 ### 10.4 示例：自定义 ship 图表风格
 
 ```python
-from reporting_config import PublicationStyle, ShipPlotConfig
+from reporting_config import build_ship_plot_config
 from ship_simulation.run_report import generate_report
 
-plot_config = ShipPlotConfig(
-    style=PublicationStyle(dpi=360, title_size=15, label_size=12),
+plot_config = build_ship_plot_config(
+    preset="paper",
+    style_overrides={"dpi": 380},
     own_ship_color="#0f6cbd",
     baseline_color="#b54708",
     dashboard_figsize=(15.5, 10.5),
@@ -361,6 +376,13 @@ generate_report(plot_config=plot_config)
 更多细节见：
 
 - `docs/visualization_guide.md`
+
+说明：
+
+- `SciencePlots` 现在作为可选样式后端接入项目
+- 如果环境里没有安装 `SciencePlots`，系统会自动回退到当前内置的 `matplotlib rcParams` 风格
+- 为避免中文和 LaTeX 依赖冲突，默认建议在 `science_styles` 中保留 `no-latex`
+- 如果你想“以后只改一个配置文件”，优先编辑 `reporting_config.py` 顶部的 `PLOT_STYLE_PRESETS`、`BENCHMARK_PLOT_PRESETS`、`SHIP_PLOT_PRESETS`
 
 ---
 

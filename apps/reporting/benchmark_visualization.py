@@ -40,10 +40,12 @@ class BenchmarkFigurePayload:
 
     results: Dict[str, Dict[str, Dict[str, List[float]]]]
     problems: Sequence[str]
+    setting_results: Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]] | None = None
     igd_curves: Dict[str, Dict[str, List[List[float]]]] | None = None
     hv_curves: Dict[str, Dict[str, List[List[float]]]] | None = None
     diagnostics: Dict[str, Dict[str, List[List[KEMMChangeDiagnostics]]]] | None = None
     ablation_results: Dict[str, Dict[str, Dict[str, List[float]]]] | None = None
+    ablation_setting_results: Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]] | None = None
     plot_config: BenchmarkPlotConfig = field(default_factory=BenchmarkPlotConfig)
 
 
@@ -64,6 +66,24 @@ def _marker_for(algo: str, plot_config: BenchmarkPlotConfig | None = None) -> st
 
 def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _parse_setting_key(setting_key: str | tuple[int, int]) -> tuple[int, int]:
+    if isinstance(setting_key, tuple):
+        return int(setting_key[0]), int(setting_key[1])
+    nt_str, tau_t_str = str(setting_key).split(",", maxsplit=1)
+    return int(nt_str), int(tau_t_str)
+
+
+def _format_setting_label(setting_key: str | tuple[int, int]) -> str:
+    nt, tau_t = _parse_setting_key(setting_key)
+    return f"{nt},{tau_t}"
+
+
+def _ordered_setting_keys(setting_results) -> list[str]:
+    if not setting_results:
+        return []
+    return sorted(setting_results.keys(), key=lambda key: _parse_setting_key(key))
 
 
 
@@ -164,8 +184,87 @@ class PerformanceComparisonPlots:
     """benchmark 整体性能对比图。"""
 
     @staticmethod
-    def plot_migd_main_table(results, problems, save_path="fig_A1_migd_bars.png", plot_config: BenchmarkPlotConfig | None = None):
+    def plot_migd_bar_grid(results, problems, save_path="fig_A1_migd_bars.png", plot_config: BenchmarkPlotConfig | None = None):
         PerformanceComparisonPlots.plot_metric_bars_grid(results, problems, "MIGD", save_path, plot_config=plot_config)
+
+    @staticmethod
+    def plot_migd_main_table(results, problems, save_path="fig_A1_migd_bars.png", plot_config: BenchmarkPlotConfig | None = None):
+        """兼容旧接口，内部仍导出 MIGD 柱状图网格。"""
+
+        PerformanceComparisonPlots.plot_migd_bar_grid(results, problems, save_path, plot_config=plot_config)
+
+    @staticmethod
+    def plot_migd_paper_table(
+        setting_results,
+        problems,
+        save_path="fig_A0_migd_table.png",
+        plot_config: BenchmarkPlotConfig | None = None,
+    ):
+        if not HAS_MPL or not setting_results:
+            return
+        cfg = _resolve_plot_config(plot_config)
+        _ensure_parent(Path(save_path))
+        setting_keys = _ordered_setting_keys(setting_results)
+        if not setting_keys:
+            return
+        first_setting = setting_results[setting_keys[0]]
+        algos = list(first_setting.keys())
+        rows: list[list[str]] = []
+        best_cells: set[tuple[int, int]] = set()
+        for problem in problems:
+            for row_offset, setting_key in enumerate(setting_keys):
+                nt, tau_t = _parse_setting_key(setting_key)
+                row = [problem if row_offset == 0 else "", f"{nt},{tau_t}"]
+                means = np.array(
+                    [float(np.mean(setting_results[setting_key][algo][problem]["MIGD"])) for algo in algos],
+                    dtype=float,
+                )
+                stds = np.array(
+                    [float(np.std(setting_results[setting_key][algo][problem]["MIGD"])) for algo in algos],
+                    dtype=float,
+                )
+                best_index = int(np.argmin(means))
+                for algo_index, (mean_value, std_value) in enumerate(zip(means, stds)):
+                    row.append(f"{mean_value:.4f}±{std_value:.2e}")
+                    if algo_index == best_index:
+                        best_cells.add((len(rows) + 1, algo_index + 2))
+                rows.append(row)
+
+        columns = ["Problems", "n_t,τ_t", *algos]
+        fig_height = max(4.5, 0.42 * (len(rows) + 3))
+        fig_width = max(10.0, 1.45 * len(columns))
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        ax.axis("off")
+        table = ax.table(
+            cellText=rows,
+            colLabels=columns,
+            loc="center",
+            cellLoc="center",
+            colLoc="center",
+            bbox=[0.0, 0.0, 1.0, 1.0],
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(max(7.5, cfg.style.tick_size - 0.5))
+        table.scale(1.0, 1.12)
+
+        for (row_idx, col_idx), cell in table.get_celld().items():
+            cell.set_edgecolor("#2d3748")
+            cell.set_linewidth(0.4)
+            if row_idx == 0:
+                cell.set_facecolor("#eef2f7")
+                cell.get_text().set_fontweight("bold")
+                cell.set_linewidth(0.6)
+            elif col_idx in (0, 1):
+                cell.set_facecolor("#f8fafc")
+
+        for row_idx, col_idx in best_cells:
+            if (row_idx, col_idx) in table.get_celld():
+                table[row_idx, col_idx].get_text().set_fontweight("bold")
+
+        ax.set_title("MIGD mean±std across benchmark settings", fontsize=cfg.style.title_size, pad=12.0)
+        fig.tight_layout()
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
+        plt.close(fig)
 
     @staticmethod
     def plot_three_metrics_grid(results, problems, save_path="fig_A2_three_metrics.png", plot_config: BenchmarkPlotConfig | None = None):
@@ -598,6 +697,93 @@ class AblationStudyPlots:
         save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
         plt.close(fig)
 
+    @staticmethod
+    def plot_ablation_setting_comparison(
+        ablation_setting_results,
+        problems,
+        save_path="fig_E1_ablation.png",
+        plot_config: BenchmarkPlotConfig | None = None,
+    ):
+        if not HAS_MPL or not ablation_setting_results:
+            return
+        cfg = _resolve_plot_config(plot_config)
+        _ensure_parent(Path(save_path))
+        setting_keys = _ordered_setting_keys(ablation_setting_results)
+        if not setting_keys:
+            return
+        variants = list(ablation_setting_results[setting_keys[0]].keys())
+        baseline_variant = "KEMM-Full" if "KEMM-Full" in variants else variants[0]
+        n_cols = len(setting_keys)
+        fig, axes = plt.subplots(1, n_cols, figsize=(max(9.0, 4.4 * n_cols), 4.8), squeeze=False)
+        variant_colors = [
+            cfg.highlight_color if variant == "KEMM-Full" else plt.cm.Oranges(0.35 + 0.5 * index / max(len(variants), 1))
+            for index, variant in enumerate(variants)
+        ]
+        for ax, setting_key in zip(axes[0], setting_keys):
+            baseline_by_problem = {
+                problem: float(np.mean(ablation_setting_results[setting_key][baseline_variant][problem]["MIGD"]))
+                for problem in problems
+            }
+            delta_means = []
+            delta_stds = []
+            absolute_means = []
+            for variant in variants:
+                variant_by_problem = np.array(
+                    [
+                        float(np.mean(ablation_setting_results[setting_key][variant][problem]["MIGD"]))
+                        for problem in problems
+                    ],
+                    dtype=float,
+                )
+                baseline_values = np.array(
+                    [baseline_by_problem[problem] for problem in problems],
+                    dtype=float,
+                )
+                relative_delta = np.zeros(len(problems), dtype=float)
+                safe = np.abs(baseline_values) > 1e-12
+                relative_delta[safe] = (variant_by_problem[safe] - baseline_values[safe]) / baseline_values[safe] * 100.0
+                delta_means.append(float(np.mean(relative_delta)))
+                delta_stds.append(float(np.std(relative_delta)))
+                absolute_means.append(float(np.mean(variant_by_problem)))
+
+            x = np.arange(len(variants))
+            bars = ax.bar(
+                x,
+                delta_means,
+                yerr=delta_stds,
+                color=variant_colors,
+                alpha=cfg.style.bar_alpha,
+                capsize=3,
+            )
+            ax.axhline(0.0, color="#475569", linewidth=1.0, alpha=0.7)
+            ax.set_title(f"(n_t,τ_t)=({_format_setting_label(setting_key)})")
+            ax.set_xticks(range(len(variants)))
+            ax.set_xticklabels(variants, rotation=30, ha="right")
+            ax.set_ylabel("Mean MIGD delta vs Full (%)")
+            ax.grid(True, alpha=0.25, axis="y")
+            if delta_means:
+                ymin = min(delta_means[i] - delta_stds[i] for i in range(len(delta_means)))
+                ymax = max(delta_means[i] + delta_stds[i] for i in range(len(delta_means)))
+                margin = max(0.4, 0.18 * max(1e-6, ymax - ymin))
+                ax.set_ylim(min(-0.5, ymin - margin), ymax + margin)
+            for idx, bar in enumerate(bars):
+                label = f"{delta_means[idx]:+.2f}%\nM={absolute_means[idx]:.4f}"
+                offset = 0.02 * max(abs(ax.get_ylim()[1] - ax.get_ylim()[0]), 1.0)
+                y = bar.get_height() + (delta_stds[idx] if idx < len(delta_stds) else 0.0)
+                va = "bottom" if bar.get_height() >= 0 else "top"
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2.0,
+                    y + (offset if bar.get_height() >= 0 else -offset),
+                    label,
+                    ha="center",
+                    va=va,
+                    fontsize=max(7.0, cfg.style.tick_size - 1.0),
+                )
+        fig.suptitle("KEMM ablation relative to Full (benchmark prior disabled)", fontsize=cfg.style.title_size)
+        fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.96])
+        save_figure_bundle(fig, save_path, dpi=cfg.style.dpi, interactive_figures=cfg.interactive_figures)
+        plt.close(fig)
+
 
 
 def generate_all_figures(
@@ -630,10 +816,12 @@ def generate_all_figures(
         payload = BenchmarkFigurePayload(
             results=results or {},
             problems=problems or [],
+            setting_results=None,
             igd_curves=igd_curves,
             hv_curves=hv_curves,
             diagnostics=diagnostics,
             ablation_results=ablation_results,
+            ablation_setting_results=None,
             plot_config=plot_config or BenchmarkPlotConfig(),
         )
     elif plot_config is not None:
@@ -642,6 +830,13 @@ def generate_all_figures(
     prefix = Path(output_prefix)
     cfg = payload.plot_config
     with plot_style_context(cfg.style):
+        if payload.setting_results:
+            PerformanceComparisonPlots.plot_migd_paper_table(
+                payload.setting_results,
+                payload.problems,
+                save_path=f"{prefix}_migd_table.png",
+                plot_config=cfg,
+            )
         PerformanceComparisonPlots.plot_three_metrics_grid(
             payload.results,
             payload.problems,
@@ -710,7 +905,14 @@ def generate_all_figures(
             plot_config=cfg,
         )
 
-        if payload.ablation_results:
+        if payload.ablation_setting_results:
+            AblationStudyPlots.plot_ablation_setting_comparison(
+                payload.ablation_setting_results,
+                payload.problems,
+                save_path=f"{prefix}_ablation.png",
+                plot_config=cfg,
+            )
+        elif payload.ablation_results:
             AblationStudyPlots.plot_ablation_comparison(
                 payload.ablation_results,
                 payload.problems,
@@ -719,7 +921,7 @@ def generate_all_figures(
             )
 
         if cfg.appendix_plots:
-            PerformanceComparisonPlots.plot_migd_main_table(
+            PerformanceComparisonPlots.plot_migd_bar_grid(
                 payload.results,
                 payload.problems,
                 save_path=f"{prefix}_migd_bar.png",

@@ -68,6 +68,80 @@ class EpisodeConfig:
 
 
 @dataclass
+class ScenarioTuningConfig:
+    """单个场景的几何与环境生成调参。"""
+
+    start_offset: Tuple[float, float] = (0.0, 0.0)
+    goal_offset: Tuple[float, float] = (0.0, 0.0)
+    own_speed_scale: float = 1.0
+    target_speed_scale: float = 1.0
+    scalar_amplitude_scale: float = 1.0
+    vector_speed_scale: float = 1.0
+    circular_radius_scale: float = 1.0
+    polygon_scale: float = 1.0
+    target_limit: int | None = None
+
+
+@dataclass
+class HarborClutterTuningConfig(ScenarioTuningConfig):
+    """高密障碍港区的专项生成参数。"""
+
+    start_offset: Tuple[float, float] = (0.0, 220.0)
+    goal_offset: Tuple[float, float] = (0.0, -220.0)
+    own_speed_scale: float = 1.04
+    target_speed_scale: float = 0.9
+    scalar_amplitude_scale: float = 0.82
+    vector_speed_scale: float = 0.86
+    circular_radius_scale: float = 0.68
+    polygon_scale: float = 0.82
+    target_limit: int | None = 2
+    circular_obstacle_limit: int | None = 6
+    polygon_obstacle_limit: int | None = 3
+    channel_width_scale: float = 1.15
+
+
+@dataclass
+class ScenarioGenerationConfig:
+    """ship 场景生成的可调参数集合。"""
+
+    head_on: ScenarioTuningConfig = field(default_factory=ScenarioTuningConfig)
+    crossing: ScenarioTuningConfig = field(default_factory=ScenarioTuningConfig)
+    overtaking: ScenarioTuningConfig = field(default_factory=ScenarioTuningConfig)
+    harbor_clutter: HarborClutterTuningConfig = field(default_factory=HarborClutterTuningConfig)
+
+
+@dataclass(frozen=True)
+class ScenarioChangeStepConfig:
+    """在某个重规划 step 生效的动态实验变化。"""
+
+    step_index: int
+    label: str
+    notes: str = ""
+    scalar_amplitude_scale: float = 1.0
+    vector_speed_scale: float = 1.0
+    current_speed_scale: float = 1.0
+    target_speed_scale: float = 1.0
+    target_heading_delta_deg: float = 0.0
+    channel_width_scale: float = 1.0
+    inject_channel_closure: bool = False
+    closure_center_x: float | None = None
+    closure_width: float = 260.0
+    closure_gap_center_ratio: float = 0.5
+    closure_gap_span_ratio: float = 0.24
+
+
+@dataclass
+class ScenarioExperimentConfig:
+    """ship 物理实验的动态变化配置。"""
+
+    enabled: bool = False
+    profile_name: str = "baseline"
+    difficulty_label: str = "baseline"
+    recurrence_pattern: tuple[str, ...] = ()
+    change_schedule: tuple[ScenarioChangeStepConfig, ...] = ()
+
+
+@dataclass
 class ProblemConfig:
     """优化问题总配置。"""
 
@@ -91,6 +165,8 @@ class ProblemConfig:
     ship: ShipConfig = field(default_factory=ShipConfig)
     environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
     domain: DomainConfig = field(default_factory=DomainConfig)
+    scenario_generation: ScenarioGenerationConfig = field(default_factory=ScenarioGenerationConfig)
+    experiment: ScenarioExperimentConfig = field(default_factory=ScenarioExperimentConfig)
 
 
 @dataclass
@@ -133,3 +209,100 @@ def build_default_demo_config() -> DemoConfig:
     """返回默认 demo/report 配置。"""
 
     return DemoConfig()
+
+
+def build_experiment_profile(profile_name: str) -> ScenarioExperimentConfig:
+    """返回与 KEMM 机制对齐的 ship 动态实验 profile。"""
+
+    key = profile_name.strip().lower()
+    if key in {"", "baseline"}:
+        return ScenarioExperimentConfig(enabled=False, profile_name="baseline", difficulty_label="baseline")
+    if key == "drift":
+        return ScenarioExperimentConfig(
+            enabled=True,
+            profile_name="drift",
+            difficulty_label="medium",
+            recurrence_pattern=("baseline", "current_build_up", "traffic_drift"),
+            change_schedule=(
+                ScenarioChangeStepConfig(
+                    step_index=1,
+                    label="Current build-up",
+                    notes="Strengthen flow layers and mild traffic acceleration.",
+                    scalar_amplitude_scale=1.08,
+                    vector_speed_scale=1.16,
+                    current_speed_scale=1.12,
+                    target_speed_scale=1.04,
+                ),
+                ScenarioChangeStepConfig(
+                    step_index=3,
+                    label="Traffic intent drift",
+                    notes="Traffic headings drift while environmental forcing remains elevated.",
+                    scalar_amplitude_scale=1.15,
+                    vector_speed_scale=1.22,
+                    current_speed_scale=1.18,
+                    target_speed_scale=1.08,
+                    target_heading_delta_deg=11.0,
+                ),
+            ),
+        )
+    if key == "shock":
+        return ScenarioExperimentConfig(
+            enabled=True,
+            profile_name="shock",
+            difficulty_label="hard",
+            recurrence_pattern=("baseline", "closure_shock"),
+            change_schedule=(
+                ScenarioChangeStepConfig(
+                    step_index=2,
+                    label="Sudden channel closure",
+                    notes="Inject a temporary closure barrier and stronger traffic deviation.",
+                    scalar_amplitude_scale=1.12,
+                    vector_speed_scale=1.18,
+                    current_speed_scale=1.14,
+                    target_speed_scale=1.06,
+                    target_heading_delta_deg=14.0,
+                    channel_width_scale=0.92,
+                    inject_channel_closure=True,
+                    closure_width=320.0,
+                    closure_gap_center_ratio=0.56,
+                    closure_gap_span_ratio=0.18,
+                ),
+            ),
+        )
+    if key == "recurring_harbor":
+        return ScenarioExperimentConfig(
+            enabled=True,
+            profile_name="recurring_harbor",
+            difficulty_label="medium-hard",
+            recurrence_pattern=("harbor_base", "ebb_shift", "familiar_recovery"),
+            change_schedule=(
+                ScenarioChangeStepConfig(
+                    step_index=1,
+                    label="Ebb shift",
+                    notes="Moderate environmental drift that preserves the same harbor topology.",
+                    scalar_amplitude_scale=1.05,
+                    vector_speed_scale=1.10,
+                    current_speed_scale=1.08,
+                    target_speed_scale=1.03,
+                    target_heading_delta_deg=6.0,
+                ),
+                ScenarioChangeStepConfig(
+                    step_index=3,
+                    label="Familiar recovery",
+                    notes="Conditions partially return, matching the recurring-scene memory hypothesis.",
+                    scalar_amplitude_scale=0.98,
+                    vector_speed_scale=0.96,
+                    current_speed_scale=0.96,
+                    target_speed_scale=0.99,
+                    target_heading_delta_deg=-4.0,
+                ),
+            ),
+        )
+    raise ValueError(f"Unsupported experiment profile: {profile_name}")
+
+
+def apply_experiment_profile(config: ProblemConfig, profile_name: str) -> ProblemConfig:
+    """原地配置 ship 动态实验 profile，并返回 config 以便链式调用。"""
+
+    config.experiment = build_experiment_profile(profile_name)
+    return config

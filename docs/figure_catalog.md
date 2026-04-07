@@ -176,24 +176,39 @@
 
 - 状态：已实现
 - 输出文件：`benchmark_outputs/.../figures/benchmark_ablation.png`
-- 生成入口：`AblationStudyPlots.plot_ablation_comparison()`
-- 视觉元素：横轴为变体，纵轴为聚合 MIGD
+- 生成入口：`AblationStudyPlots.plot_ablation_setting_comparison()`
+- 视觉元素：按 `(n_t, τ_t)` 分面，横轴为 KEMM 消融变体，纵轴为相对 `KEMM-Full` 的聚合 MIGD 退化百分比，带误差条和绝对 MIGD 标注
 - 论文用途：说明核心模块必要性
 - 推荐章节：消融实验
-- 推荐图注模板：图 X 比较了完整 KEMM 与关键消融变体的聚合性能差异，用于分析各模块的贡献。
-- 推荐正文写法：完整 KEMM 相对简化变体仍保持优势，说明记忆、预测与迁移并非冗余组件。
-- 审稿风险：需明确每个消融变体具体关闭了什么能力
+- 推荐图注模板：图 X 在关闭 benchmark prior 的前提下比较了完整 KEMM 与关键消融变体在不同动态设置下相对完整模型的性能退化，用于分析各模块的独立贡献。
+- 推荐正文写法：相对退化图比绝对 MIGD 柱状图更适合展示模块贡献，因为 benchmark prior、精英保留和历史回灌等共享兜底机制会显著压缩绝对性能差距。
+- 审稿风险：需明确本图是 `prior-off` 的模块消融，而不是主结果表
 - 建议：主图
 
 ---
 
-## 3. Benchmark 附录 / 兼容图
+## 3. Benchmark 主表与附录 / 兼容图
 
-### 3.1 `benchmark_migd_bar.png`
+### 3.1 `benchmark_migd_table.png`
+
+- 状态：已实现
+- 输出文件：`benchmark_outputs/.../figures/benchmark_migd_table.png`
+- 生成入口：`PerformanceComparisonPlots.plot_migd_paper_table()`
+- 视觉元素：按问题分组、按 `(n_t, τ_t)` 列出多组动态设置，每个单元格给出 `MIGD mean±std`，行内最优加粗
+- 论文用途：主结果表
+- 推荐章节：benchmark 主实验
+- 推荐图注模板：图 X 给出了各算法在不同 benchmark 问题与动态设置下的 MIGD 均值与标准差，其中每行加粗值表示该设置下的最优算法。
+- 推荐正文写法：主表直接对应论文的 benchmark 主结果部分，适合用于横向比较不同算法在多种动态频率下的稳健性。
+- 审稿风险：需要说明旧图和主表的 canonical setting 是否一致
+- 建议：主图
+
+---
+
+### 3.2 `benchmark_migd_bar.png`
 
 - 状态：已实现
 - 输出文件：`benchmark_outputs/.../figures/benchmark_migd_bar.png`
-- 生成入口：`PerformanceComparisonPlots.plot_migd_main_table()`
+- 生成入口：`PerformanceComparisonPlots.plot_migd_bar_grid()`
 - 视觉元素：横轴为问题，纵轴为各算法的 MIGD 均值，颜色区分算法
 - 论文用途：传统单指标对比图
 - 推荐章节：附录 / 兼容结果对齐
@@ -205,6 +220,34 @@
 ---
 
 ## 4. Ship 默认图包
+
+### 4.0 `scenario_gallery.png`
+
+- 状态：已实现
+- 输出文件：`ship_simulation/outputs/.../figures/scenario_gallery.png`
+- 生成入口：`save_scenario_gallery()`
+- 视觉元素：2x2 多面板场景总览，包含起点、终点、静态障碍和动态交通体初始朝向
+- 论文用途：统一交代 ship 研究中使用的环境集
+- 推荐章节：实验场景设置
+- 推荐图注模板：图 X 展示了 ship 主线使用的多场景环境总览，包括起终点、静态障碍布局与动态目标船初始运动方向。
+- 推荐正文写法：该图用于集中说明本文物理仿真所覆盖的近海会遇环境，而不是在结果段落重复解释每个场景。
+- 审稿风险：需说明该图展示的是初始布局，不代表完整动态演化
+- 建议：主图
+
+### 4.0b `route_bundle_gallery.png`
+
+- 状态：已实现
+- 输出文件：`ship_simulation/outputs/.../figures/route_bundle_gallery.png`
+- 生成入口：`save_route_bundle_gallery()`
+- 视觉元素：2x2 多面板最终轨迹带图，叠加重复运行得到的路线束与代表路径
+- 论文用途：展示算法在不同物理场景中的路径稳定性与可重复性
+- 推荐章节：案例分析 / repeated-run 分析
+- 推荐图注模板：图 X 对比了不同场景下重复运行得到的最终轨迹带，用于展示算法输出路径的稳定性与主通道结构。
+- 推荐正文写法：轨迹带图比单条代表轨迹更适合展示 ship 规划在复杂环境下的可重复性和航线收敛区域。
+- 审稿风险：应明确每种颜色对应的算法以及轨迹带包含多少次重复运行
+- 建议：主图
+
+---
 
 ### 4.1 `*_environment_overlay.png`
 
@@ -219,7 +262,20 @@
 - 审稿风险：需要明确热图具体对应的物理量
 - 建议：主图
 
-### 4.2 `*_snapshots.png`
+### 4.2 `*_change_timeline.png`
+
+- 状态：已实现
+- 输出文件：`ship_simulation/outputs/.../figures/<scenario>_change_timeline.png`
+- 生成入口：`save_change_timeline_panel()`
+- 视觉元素：按 planning step 展示加权目标、局部最大风险、求解耗时，并用竖线与标签标注动态实验事件
+- 论文用途：解释 rolling-horizon 中具体发生了什么变化，以及算法在变化后的恢复过程
+- 推荐章节：动态实验设计 / 机制分析
+- 推荐图注模板：图 X 展示了滚动重规划过程中局部质量、风险与求解开销随 planning step 的变化，并标出了各类实验扰动触发点。
+- 推荐正文写法：该图把环境扰动与风险响应放在同一页，有助于解释 KEMM 在 drift、shock 或 recurring harbor 场景中的局部恢复行为。
+- 审稿风险：需要说明横轴是 planning step 而不是物理时间
+- 建议：主图
+
+### 4.3 `*_snapshots.png`
 
 - 状态：已实现
 - 输出文件：`ship_simulation/outputs/.../figures/<scenario>_snapshots.png`
@@ -232,7 +288,7 @@
 - 审稿风险：若缺少时间标注，会削弱“动态”表达
 - 建议：主图
 
-### 4.3 `*_spatiotemporal.png`
+### 4.4 `*_spatiotemporal.png`
 
 - 状态：已实现
 - 输出文件：`ship_simulation/outputs/.../figures/<scenario>_spatiotemporal.png`
@@ -244,8 +300,9 @@
 - 推荐正文写法：三维时空视角强调了本船并非只在空间上绕开目标船，而是在时间轴上错峰通过危险区域。
 - 审稿风险：3D 图需配合 2D 图一起读
 - 建议：主图
+- 交互补充：若打开 `interactive_html=True`，还会导出同名 `.html`，hover 可查看速度、航向、风险、净空和计划变化事件。
 
-### 4.4 `*_control_timeseries.png`
+### 4.5 `*_control_timeseries.png`
 
 - 状态：已实现
 - 输出文件：`ship_simulation/outputs/.../figures/<scenario>_control_timeseries.png`
@@ -258,7 +315,7 @@
 - 审稿风险：要说明控制量是等效命令而非真实舵角
 - 建议：主图
 
-### 4.5 `*_pareto3d.png`
+### 4.6 `*_pareto3d.png`
 
 - 状态：已实现
 - 输出文件：`ship_simulation/outputs/.../figures/<scenario>_pareto3d.png`
@@ -270,8 +327,9 @@
 - 推荐正文写法：knee point 位于能耗、时间与风险的折中区域，局部放大图进一步说明该点并非孤立异常值，而是前沿拐点附近的稳定选择。
 - 审稿风险：需说明 knee 检测准则与局部放大的投影视角
 - 建议：主图
+- 交互补充：若打开 `interactive_html=True`，还会导出同名 `.html`，hover 可查看 point index、weighted score、平均速度和首个 waypoint 摘要。
 
-### 4.6 `*_parallel.png`
+### 4.7 `*_parallel.png`
 
 - 状态：已实现
 - 输出文件：`ship_simulation/outputs/.../figures/<scenario>_parallel.png`
@@ -284,7 +342,7 @@
 - 审稿风险：必须明确归一化方向和尺度
 - 建议：主图或补充主图
 
-### 4.7 `*_radar.png`
+### 4.8 `*_radar.png`
 
 - 状态：已实现
 - 输出文件：`ship_simulation/outputs/.../figures/<scenario>_radar.png`
@@ -297,7 +355,7 @@
 - 审稿风险：雷达图面积不能当成严格统计量
 - 建议：补充主图
 
-### 4.8 `*_convergence.png`
+### 4.9 `*_convergence.png`
 
 - 状态：已实现
 - 输出文件：`ship_simulation/outputs/.../figures/<scenario>_convergence.png`
@@ -310,7 +368,7 @@
 - 审稿风险：需解释 surrogate 分数的组成方式
 - 建议：主图
 
-### 4.9 `*_distribution.png`
+### 4.10 `*_distribution.png`
 
 - 状态：已实现
 - 输出文件：`ship_simulation/outputs/.../figures/<scenario>_distribution.png`
@@ -323,7 +381,7 @@
 - 审稿风险：运行次数过少时解释力度不足
 - 建议：主图或强附录图
 
-### 4.10 `*_dashboard.png`
+### 4.11 `*_dashboard.png`
 
 - 状态：已实现
 - 输出文件：`ship_simulation/outputs/.../figures/<scenario>_dashboard.png`

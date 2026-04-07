@@ -94,6 +94,8 @@ SHIP_PLOT_PRESETS = {
     "paper": dict(
         overlay_figsize=(11.8, 7.0),
         route_panel_figsize=(13.2, 8.2),
+        scenario_gallery_figsize=(12.8, 9.4),
+        route_bundle_figsize=(13.0, 9.8),
         snapshot_figsize=(13.0, 8.4),
         spatiotemporal_figsize=(10.2, 7.0),
         control_figsize=(10.4, 8.8),
@@ -105,6 +107,7 @@ SHIP_PLOT_PRESETS = {
         convergence_figsize=(9.4, 5.2),
         risk_breakdown_figsize=(10.2, 7.0),
         safety_envelope_figsize=(10.2, 7.2),
+        change_timeline_figsize=(10.6, 6.8),
         statistics_figsize=(12.0, 4.8),
         dashboard_figsize=(15.2, 11.2),
     ),
@@ -153,6 +156,8 @@ class ShipPlotConfig:
     target_width: float = 1.8
     overlay_figsize: tuple[float, float] = (11.5, 6.8)
     route_panel_figsize: tuple[float, float] = (12.6, 8.0)
+    scenario_gallery_figsize: tuple[float, float] = (12.4, 9.2)
+    route_bundle_figsize: tuple[float, float] = (12.8, 9.6)
     snapshot_figsize: tuple[float, float] = (12.5, 8.0)
     spatiotemporal_figsize: tuple[float, float] = (10.0, 6.8)
     control_figsize: tuple[float, float] = (10.0, 8.6)
@@ -164,6 +169,7 @@ class ShipPlotConfig:
     convergence_figsize: tuple[float, float] = (9.0, 5.0)
     risk_breakdown_figsize: tuple[float, float] = (10.0, 6.8)
     safety_envelope_figsize: tuple[float, float] = (10.0, 7.0)
+    change_timeline_figsize: tuple[float, float] = (10.4, 6.8)
     statistics_figsize: tuple[float, float] = (11.4, 4.8)
     dashboard_figsize: tuple[float, float] = (15.0, 11.0)
     comparison_figsize: tuple[float, float] = (14.0, 4.8)
@@ -176,6 +182,12 @@ class ShipPlotConfig:
     violin_alpha: float = 0.55
     inset_zoom_alpha: float = 0.92
     velocity_arrow_scale: float = 55.0
+    obstacle_alpha: float = 0.48
+    boundary_alpha: float = 0.22
+    route_bundle_alpha: float = 0.32
+    representative_route_alpha: float = 0.96
+    event_line_color: str = "#be123c"
+    event_fill_color: str = "#fecdd3"
     appendix_plots: bool = False
     interactive_figures: bool = False
     interactive_html: bool = False

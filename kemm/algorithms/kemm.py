@@ -125,8 +125,7 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
         transferability = self._drift_detector.predict_transferability()
         prediction_confidence = self._drift_predictor.get_prediction_confidence()
 
-        ratios, _ = self._operator_selector.get_ratios()
-        ratios = self._adjust_operator_ratios(ratios)
+        ratios = self._resolve_operator_ratios()
         n_memory, n_predict, n_transfer, n_reinit = self._allocate_operator_counts(ratios)
 
         parts: list[np.ndarray] = []
@@ -189,7 +188,8 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
         self.population, self.fitness = self.env_selection(candidate_pop, candidate_fit, self.pop_size)
 
         response_quality = self._estimate_response_quality()
-        self._operator_selector.update_with_quality(response_quality)
+        if self.config.enable_adaptive:
+            self._operator_selector.update_with_quality(response_quality)
 
         fronts = self.fast_nds(self.fitness)
         selected_front_size = len(fronts[0]) if fronts else 0
@@ -273,6 +273,46 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
             probe = np.pad(probe, (0, self.config.probe_dim - len(probe)))
         return probe[: self.config.probe_dim]
 
+    def _resolve_operator_ratios(self) -> np.ndarray:
+        """根据 ablation 开关返回最终使用的候选来源比例。"""
+
+        if not self.config.enable_adaptive:
+            return self._fixed_operator_ratios()
+
+        ratios, _ = self._operator_selector.get_ratios()
+        ratios = self._adjust_operator_ratios(ratios)
+        return self._apply_operator_gates(ratios)
+
+    def _fixed_operator_ratios(self) -> np.ndarray:
+        """在禁用 adaptive 时对启用模块和随机重启做等比分配。"""
+
+        ratios = np.zeros(4, dtype=float)
+        active_slots = [3]
+        if self.config.enable_memory:
+            active_slots.append(0)
+        if self.config.enable_prediction:
+            active_slots.append(1)
+        if self.config.enable_transfer:
+            active_slots.append(2)
+        share = 1.0 / len(active_slots)
+        ratios[active_slots] = share
+        return ratios
+
+    def _apply_operator_gates(self, ratios: np.ndarray) -> np.ndarray:
+        """将消融开关转换为硬门控，不允许被关闭模块继续占预算。"""
+
+        gated = np.asarray(ratios, dtype=float).copy()
+        if not self.config.enable_memory:
+            gated[0] = 0.0
+        if not self.config.enable_prediction:
+            gated[1] = 0.0
+        if not self.config.enable_transfer:
+            gated[2] = 0.0
+        if gated.sum() <= 0.0:
+            gated[3] = 1.0
+            return gated
+        return gated / gated.sum()
+
     def _adjust_operator_ratios(self, base_ratios: np.ndarray) -> np.ndarray:
         """结合环境变化强度对 adaptive 基础比例做二次修正。"""
 
@@ -300,7 +340,7 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
     def _build_memory_candidates(self, obj_func, t: float, n_memory: int) -> np.ndarray | None:
         """从压缩记忆中检索候选。"""
 
-        if n_memory <= 0 or len(self._vae_memory) == 0:
+        if not self.config.enable_memory or n_memory <= 0 or len(self._vae_memory) == 0:
             return None
 
         retrieved = self._vae_memory.retrieve(
@@ -336,7 +376,7 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
     ) -> np.ndarray | None:
         """构造预测型候选。"""
 
-        if n_predict <= 0:
+        if not self.config.enable_prediction or n_predict <= 0:
             return None
 
         confidence = self._drift_predictor.get_prediction_confidence()
@@ -377,7 +417,7 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
     def _build_transfer_candidates(self, obj_func, t: float, n_transfer: int) -> list[np.ndarray]:
         """通过多源迁移生成候选。"""
 
-        if n_transfer <= 0 or len(self._vae_memory) < 2:
+        if not self.config.enable_transfer or n_transfer <= 0 or len(self._vae_memory) < 2:
             return []
 
         retrieved = self._vae_memory.retrieve(

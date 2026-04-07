@@ -14,6 +14,7 @@
 ## 1. 项目亮点
 
 - 双主线统一：benchmark 理论验证 + ship 物理语义验证
+- benchmark 主线已补齐论文风格 `MIGD` 主表、KEMM 四模块消融和更接近论文的 `MMTL`
 - KEMM 已拆成可维护结构：主流程、子模块、adapter、报告层明确分层
 - ship 主线已升级为滚动重规划 episode，而不是单次静态轨迹 demo
 - ship 场景已支持：静态障碍、动态交通体、环境标量场/矢量场、COLREG 角色标签
@@ -26,11 +27,11 @@
 
 ### 2.1 Benchmark 结果预览
 
-![Benchmark Preview](docs/images/benchmark_preview.png)
+![Benchmark Preview](./docs/images/benchmark_preview.png)
 
 ### 2.2 Ship 仿真结果预览
 
-![Ship Preview](docs/images/ship_preview.png)
+![Ship Preview](./docs/images/ship_preview.png)
 
 ---
 
@@ -49,7 +50,10 @@
 │   ├── environment_setup.md
 │   ├── figure_catalog.md
 │   ├── formula_audit.md
+│   ├── how_to_run.md
 │   ├── kemm_reference.md
+│   ├── run_commands.md
+│   ├── ship_experiment_playbook.md
 │   ├── ship_simulation_reference.md
 │   ├── visualization_guide.md
 │   └── images/
@@ -118,10 +122,16 @@ pip install -r requirements-dev.txt
 更详细环境说明见：
 
 - [docs/environment_setup.md](docs/environment_setup.md)
+- [docs/how_to_run.md](docs/how_to_run.md)
+- [docs/ship_experiment_playbook.md](docs/ship_experiment_playbook.md)
 
 ---
 
 ## 6. 快速开始
+
+如果你以后忘了命令，优先看：
+
+- [docs/how_to_run.md](docs/how_to_run.md)
 
 如果你不想记复杂命令，只记下面这 4 条就够了：
 
@@ -152,18 +162,37 @@ python -m apps.benchmark_runner --quick --plot-preset ieee
 
 - 运行 `python run_experiments.py --quick --plot-preset paper` 会用旧兼容入口执行一轮 benchmark 快速验证，并以 `paper` 预设导出论文风格图表。
 - 运行 `python -m apps.benchmark_runner --quick --plot-preset ieee` 会直接使用真实 benchmark 入口，并按 `ieee` 风格生成结果，更适合当前主线回归与出图。
+- benchmark 报告默认会额外跑三组动态设置 `(n_t, τ_t) = (5,10), (10,10), (10,20)`，导出论文风格的 `benchmark_migd_table.png`，并附带关闭 benchmark prior 的 KEMM 四模块消融图 `benchmark_ablation.png`。
+- benchmark 主报告里的关键原始文件是 `raw/paper_table_metrics.csv` 与 `raw/ablation_delta_metrics.csv`，前者对应论文主表，后者对应相对 `KEMM-Full` 的消融退化百分比。
 
 ### 6.2 benchmark 完整实验
 
 ```powershell
 python run_experiments.py --full --plot-preset paper
+python -m apps.benchmark_runner --full --plot-preset paper
 ```
 
 说明：
 
 - 运行 `python run_experiments.py --full --plot-preset paper` 会执行完整 benchmark 实验，并按 `paper` 预设输出完整报告与图表。
+- 运行 `python -m apps.benchmark_runner --full --plot-preset paper` 会直接使用 benchmark 真实入口。
 
-### 6.3 ship 单次演示
+### 6.3 benchmark 中等规模实验
+
+当前命令行没有内置 `--medium` 选项。
+
+如果你想跑一组介于 `quick` 和 `full` 之间的 benchmark，直接看：
+
+- [docs/how_to_run.md](docs/how_to_run.md)
+- [docs/run_commands.md](docs/run_commands.md)
+
+里面已经给出了一段不修改源码文件的 PowerShell 临时脚本，默认采用：
+
+- `N_RUNS = 3`
+- `N_CHANGES = 7`
+- `GENS_PER_CHANGE = 15`
+
+### 6.4 ship 单次演示
 
 ```powershell
 python -m apps.ship_runner
@@ -175,10 +204,12 @@ python -c "from ship_simulation.main_demo import run_demo; run_demo('crossing', 
 - 运行 `python -m apps.ship_runner` 会走 ship 的兼容命令入口，执行一次默认演示。
 - 运行 `python -c "from ship_simulation.main_demo import run_demo; run_demo('crossing', optimizer_name='kemm', show_animation=False)"` 会直接调用 ship 主线代码，在 `crossing` 场景下用 `KEMM` 跑一次不弹动画窗口的演示。
 
-### 6.4 ship 批量报告
+### 6.5 ship 批量报告与完整物理测试
 
 ```powershell
 python ship_simulation/run_report.py --quick --scenarios crossing --n-runs 1 --plot-preset paper
+python ship_simulation/run_report.py
+python ship_simulation/run_report.py --scenarios harbor_clutter --experiment-profile shock --n-runs 3 --plot-preset paper
 python ship_simulation/run_report.py --plot-preset ieee --science-style science,ieee,no-latex
 python ship_simulation/run_report.py --quick --scenarios crossing --interactive-figures --interactive-html
 ```
@@ -186,10 +217,13 @@ python ship_simulation/run_report.py --quick --scenarios crossing --interactive-
 说明：
 
 - 运行 `python ship_simulation/run_report.py --quick --scenarios crossing --n-runs 1 --plot-preset paper` 会快速生成一个 `crossing` 场景、每算法 1 次运行的 ship 报告，适合 smoke test 和看默认论文图包。
+- 运行 `python ship_simulation/run_report.py` 才是 ship 主线的完整物理测试报告入口。默认会跑 `head_on / crossing / overtaking / harbor_clutter` 四个场景，以及 `kemm / nsga_style / random` 三种算法。
+- 运行 `python ship_simulation/run_report.py --scenarios harbor_clutter --experiment-profile shock --n-runs 3 --plot-preset paper` 会启用突变型动态实验 profile，更适合验证 KEMM 在 closure shock 下的响应能力。
 - 运行 `python ship_simulation/run_report.py --plot-preset ieee --science-style science,ieee,no-latex` 会按 `ieee` 预设并显式指定 `SciencePlots` 样式 tuple 生成 ship 报告，适合投稿前试版式。
 - 运行 `python ship_simulation/run_report.py --quick --scenarios crossing --interactive-figures --interactive-html` 会在 PNG 之外为 ship 的 3D 图额外导出可交互的 `*.fig.pickle`，并为 `pareto3d / spatiotemporal` 额外导出 `.html`，便于自己旋转视角后再保存。
+- ship 的 Plotly 3D HTML 现在会附带更完整的 hover 信息，例如 Pareto 点的加权分数、平均速度和首个 waypoint 摘要，以及时空轨迹上的速度、航向、风险和净空。
 
-### 6.5 基础测试
+### 6.6 基础测试
 
 ```powershell
 python -m unittest discover -s tests -v
@@ -260,6 +294,8 @@ ship 主线已经不是单次静态规划 demo，而是：
 
 当前推荐的 ship 论文图包包括：
 
+- 多场景环境总览图
+- 多场景最终轨迹带对比图
 - 环境场/矢量场叠加轨迹图
 - 高密障碍海域路线规划主图
 - 动态避碰时空快照图
@@ -314,6 +350,53 @@ python -m apps.benchmark_runner --quick --plot-preset ieee
 - `nature`：更强调视觉展示
 - `thesis`：不强依赖 SciencePlots，适合长文档或毕业论文
 
+如果你想直接改 ship 场景生成参数，优先改：
+
+- `ship_simulation/config.py` 里的 `ProblemConfig.scenario_generation`
+
+例如：
+
+```python
+from ship_simulation.config import build_default_config
+
+config = build_default_config()
+config.scenario_generation.harbor_clutter.circular_obstacle_limit = 5
+config.scenario_generation.harbor_clutter.polygon_obstacle_limit = 2
+config.scenario_generation.harbor_clutter.target_limit = 2
+config.scenario_generation.harbor_clutter.circular_radius_scale = 0.55
+config.scenario_generation.harbor_clutter.channel_width_scale = 1.20
+```
+
+这组参数会直接影响 `harbor_clutter` 的障碍数量、障碍尺度、目标船数量和通航窗口宽度。
+
+如果你想直接启用面向 KEMM 机制验证的动态实验 profile，优先改：
+
+- `ship_simulation/config.py` 里的 `ProblemConfig.experiment`
+
+例如：
+
+```python
+from ship_simulation.config import apply_experiment_profile, build_default_config
+
+config = build_default_config()
+apply_experiment_profile(config, "shock")
+```
+
+当前内置 profile：
+
+- `baseline`
+- `drift`
+- `shock`
+- `recurring_harbor`
+
+这些 profile 会直接影响滚动重规划过程中的环境漂移、目标船意图变化和通道 closure 扰动；对应的解释图是每个场景新增的 `*_change_timeline.png`。
+
+报告原始目录还会额外导出：
+
+- `raw/figure_manifest.json`
+
+它和 `reports/figure_inventory.md` 由同一套 figure registry 自动生成。后面如果继续加图，优先在这套 registry 上扩，不要再手工同步多个列表。
+
 ---
 
 ## 10. 改算法时应该改哪里
@@ -338,6 +421,7 @@ python -m apps.benchmark_runner --quick --plot-preset ieee
 - [AGENTS.md](AGENTS.md)
 - [docs/codebase_reference.md](docs/codebase_reference.md)
 - [docs/ai_developer_handoff.md](docs/ai_developer_handoff.md)
+- [docs/how_to_run.md](docs/how_to_run.md)
 
 ### KEMM 主线
 
@@ -347,6 +431,7 @@ python -m apps.benchmark_runner --quick --plot-preset ieee
 ### Ship 主线
 
 - [docs/ship_simulation_reference.md](docs/ship_simulation_reference.md)
+- [docs/ship_experiment_playbook.md](docs/ship_experiment_playbook.md)
 
 ### 图表与论文写作
 
@@ -360,3 +445,5 @@ python -m apps.benchmark_runner --quick --plot-preset ieee
 - `SciencePlots` 是可选依赖；未安装时会自动回退到内置 matplotlib 风格。
 - Windows 下运行 benchmark 或 ship 报告时，末尾可能仍出现 `joblib/loky -> wmic` 的环境警告，但一般不影响结果生成。
 - ship 主线当前仍是增强 Nomoto，而不是 MMG；偏现实性来自场景、风险建模、环境层和滚动重规划，而不是高保真水动力学本体。
+- benchmark 消融图 `benchmark_ablation.png` 的纵轴是“相对 `KEMM-Full` 的 MIGD 退化百分比”，正值表示删掉模块后性能变差，不是性能提升。
+- 如果你看到某份旧 benchmark 报告里 `FDA1` 与 `dMOP3` 的数值整行相同，那是修复前的过期结果；当前代码已经修正 `dMOP3` 的问题定义，旧结果不应继续引用。

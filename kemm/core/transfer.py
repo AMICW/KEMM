@@ -416,9 +416,9 @@ class ManifoldTransferLearning:
         d = min(d_s, d_t, max_d)
 
 
-        # ── d < 2 时退化为高斯微扰 ──
-        # 改进点: 低秩流形不适合 SGF, 直接用微扰更稳健
-        if d < 2:
+        # ── d < 1 时退化为高斯微扰 ──
+        # 一维子空间在动态 Pareto 前沿迁移中很常见，仍应允许 SGF 正常执行。
+        if d < 1:
             return self._gaussian_perturbation(S_j, N_j * self.n_subspaces)
 
 

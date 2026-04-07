@@ -21,6 +21,21 @@ class DynamicTestProblems:
 
         return (1.0 / self.nt) * np.floor(generation / self.tau_t)
 
+    def _dmop3_active_index(self, t: float, n_var: int) -> int:
+        """Return the active decision-variable index for dMOP3.
+
+        Published dMOP3 uses ``f1(x_I) = x_r`` with ``r = S(1, 2, ..., n)``.
+        The source notation does not fully specify a deterministic schedule for
+        ``S`` in code form, so we use a reproducible cyclic selection keyed by
+        the environment index. This preserves the intended benchmark behavior:
+        the decision variable controlling POF spread changes over time.
+        """
+
+        if n_var <= 0:
+            return 0
+        env_index = int(np.floor(t * self.nt + 1e-12))
+        return env_index % n_var
+
     @staticmethod
     def fda1(x: np.ndarray, t: float) -> np.ndarray:
         x = np.atleast_2d(x)
@@ -102,13 +117,16 @@ class DynamicTestProblems:
         f1 = np.linspace(0.001, 1, n_points)
         return np.column_stack([f1, 1.0 - f1**H])
 
-    @staticmethod
-    def dmop3(x: np.ndarray, t: float) -> np.ndarray:
+    def dmop3(self, x: np.ndarray, t: float) -> np.ndarray:
         x = np.atleast_2d(x)
+        n_var = x.shape[1]
         G = np.sin(0.5 * np.pi * t)
-        r = 1.0 + np.sum((x[:, 1:] - G) ** 2, axis=1)
-        f1 = x[:, 0]
-        f2 = r * (1.0 - np.sqrt(f1 / r))
+        active_idx = self._dmop3_active_index(t, n_var)
+        mask = np.ones(n_var, dtype=bool)
+        mask[active_idx] = False
+        g = 1.0 + 9.0 * np.sum((x[:, mask] - G) ** 2, axis=1)
+        f1 = x[:, active_idx]
+        f2 = g * (1.0 - np.sqrt(np.clip(f1 / g, 0.0, None)))
         return np.column_stack([f1, f2])
 
     @staticmethod

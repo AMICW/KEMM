@@ -2,5 +2,7 @@ __pycache__/
 *.py[cod]
 *.png
 *.jpg
+!docs/images/*.png
+!docs/images/*.jpg
 ship_simulation/outputs/
 benchmark_outputs/

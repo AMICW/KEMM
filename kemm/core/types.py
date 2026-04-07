@@ -43,6 +43,10 @@ class KEMMConfig:
     n_var: int = 10
     n_obj: int = 2
     benchmark_aware_prior: bool = True
+    enable_memory: bool = True
+    enable_prediction: bool = True
+    enable_transfer: bool = True
+    enable_adaptive: bool = True
 
     # Adaptive operator selection.
     exploration_c: float = 0.5

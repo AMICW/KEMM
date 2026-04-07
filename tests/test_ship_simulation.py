@@ -9,7 +9,7 @@ import matplotlib
 import numpy as np
 
 from reporting_config import PublicationStyle, ShipPlotConfig, interactive_bundle_path
-from ship_simulation.config import DemoConfig, KEMMConfig, build_default_config
+from ship_simulation.config import DemoConfig, KEMMConfig, apply_experiment_profile, build_default_config
 from ship_simulation.core.environment import GridScalarField, GridVectorField
 from ship_simulation.optimizer.episode import PlanningEpisodeResult, PlanningStepResult, RollingHorizonPlanner
 from ship_simulation.optimizer.interface import ShipOptimizerInterface
@@ -22,6 +22,7 @@ from ship_simulation.visualization import (
     ExperimentSeries,
     open_figure_bundle,
     save_control_time_series,
+    save_change_timeline_panel,
     save_convergence_statistics,
     save_distribution_violin,
     save_dynamic_avoidance_snapshots,
@@ -32,8 +33,10 @@ from ship_simulation.visualization import (
     save_radar_chart,
     save_risk_breakdown_time_series,
     save_route_planning_panel,
+    save_route_bundle_gallery,
     save_run_statistics_panel,
     save_safety_envelope_plot,
+    save_scenario_gallery,
     save_spatiotemporal_plot,
     save_summary_dashboard,
 )
@@ -94,6 +97,7 @@ class ShipSimulationSmokeTests(unittest.TestCase):
             pareto_decisions=np.asarray([decision], dtype=float),
             pareto_objectives=np.asarray([evaluation.objectives], dtype=float),
             history=history,
+            applied_changes=[],
         )
         metrics = dict(evaluation.analysis_metrics)
         metrics.update(
@@ -119,6 +123,8 @@ class ShipSimulationSmokeTests(unittest.TestCase):
             analysis_metrics=metrics,
             convergence_history=history,
             terminated_reason="stub",
+            experiment_profile="baseline",
+            change_history=[],
         )
 
     def test_optimizer_context_matches_problem_shape(self):
@@ -173,12 +179,46 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         self.assertTrue(any(isinstance(layer, GridVectorField) for layer in crossing.vector_fields))
 
         harbor = ScenarioGenerator(self.config).generate("harbor_clutter")
-        self.assertGreaterEqual(len(harbor.static_obstacles), 12)
-        self.assertGreaterEqual(len(harbor.target_ships), 3)
-        self.assertGreaterEqual(sum(isinstance(obstacle, KeepOutZone) for obstacle in harbor.static_obstacles), 4)
+        self.assertGreaterEqual(len(harbor.static_obstacles), 11)
+        self.assertGreaterEqual(len(harbor.target_ships), 2)
+        self.assertGreaterEqual(sum(isinstance(obstacle, KeepOutZone) for obstacle in harbor.static_obstacles), 3)
         self.assertGreaterEqual(sum(isinstance(obstacle, ChannelBoundary) for obstacle in harbor.static_obstacles), 2)
         self.assertGreaterEqual(sum(isinstance(obstacle, GridScalarField) for obstacle in harbor.scalar_fields), 2)
         self.assertGreaterEqual(sum(isinstance(obstacle, GridVectorField) for obstacle in harbor.vector_fields), 1)
+
+    def test_scenario_generation_config_controls_harbor_clutter_density(self):
+        tuned_config = build_default_config()
+        tuned = tuned_config.scenario_generation.harbor_clutter
+        tuned.circular_obstacle_limit = 5
+        tuned.polygon_obstacle_limit = 2
+        tuned.target_limit = 2
+        tuned.circular_radius_scale = 0.5
+        default_harbor = ScenarioGenerator(self.config).generate("harbor_clutter")
+        tuned_harbor = ScenarioGenerator(tuned_config).generate("harbor_clutter")
+
+        default_circles = [obstacle for obstacle in default_harbor.static_obstacles if hasattr(obstacle, "radius")]
+        tuned_circles = [obstacle for obstacle in tuned_harbor.static_obstacles if hasattr(obstacle, "radius")]
+        self.assertEqual(len(tuned_harbor.target_ships), 2)
+        self.assertEqual(len(tuned_circles), 5)
+        self.assertEqual(sum(isinstance(obstacle, KeepOutZone) for obstacle in tuned_harbor.static_obstacles), 2)
+        self.assertLess(np.mean([obstacle.radius for obstacle in tuned_circles]), np.mean([obstacle.radius for obstacle in default_circles]))
+
+    def test_experiment_profile_applies_dynamic_changes_to_steps(self):
+        tuned_config = build_default_config()
+        apply_experiment_profile(tuned_config, "shock")
+        scenario = ScenarioGenerator(tuned_config).generate("harbor_clutter")
+        demo = DemoConfig(random_search_samples=8)
+        demo.episode.local_horizon = 180.0
+        demo.episode.execution_horizon = 60.0
+        demo.episode.max_replans = 3
+        episode = RollingHorizonPlanner(scenario, tuned_config, demo).run("random")
+        self.assertEqual(episode.experiment_profile, "shock")
+        self.assertGreaterEqual(len(episode.change_history or []), 1)
+        self.assertGreaterEqual(episode.analysis_metrics.get("scheduled_change_count", 0.0), 1.0)
+        changed_steps = [step for step in episode.steps if step.applied_changes]
+        self.assertTrue(changed_steps)
+        self.assertTrue(any("Sudden channel closure" in str(change.get("label")) for change in changed_steps[0].applied_changes))
+        self.assertGreater(len(changed_steps[0].scenario.static_obstacles), len(scenario.static_obstacles))
 
     def test_kemm_episode_avoids_static_obstacles_and_records_knee(self):
         demo = DemoConfig(
@@ -266,6 +306,9 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         outputs = [
             tmp_dir / "environment_overlay.png",
             tmp_dir / "route_planning_panel.png",
+            tmp_dir / "change_timeline.png",
+            tmp_dir / "scenario_gallery.png",
+            tmp_dir / "route_bundle_gallery.png",
             tmp_dir / "snapshots.png",
             tmp_dir / "spatiotemporal.png",
             tmp_dir / "control_timeseries.png",
@@ -284,19 +327,22 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         try:
             save_environment_overlay(outputs[0], self.scenario, series, plot_config=plot_config)
             save_route_planning_panel(outputs[1], self.scenario, series, plot_config=plot_config)
-            save_dynamic_avoidance_snapshots(outputs[2], self.scenario, episode, plot_config=plot_config)
-            save_spatiotemporal_plot(outputs[3], self.scenario, episode, plot_config=plot_config)
-            save_control_time_series(outputs[4], self.scenario.name, episode, plot_config=plot_config)
-            save_pareto_3d_with_knee(outputs[5], self.scenario.name, episode, plot_config=plot_config)
-            save_pareto_projection_panel(outputs[6], self.scenario.name, episode, plot_config=plot_config)
-            save_risk_breakdown_time_series(outputs[7], self.scenario.name, episode, plot_config=plot_config)
-            save_safety_envelope_plot(outputs[8], self.scenario.name, episode, plot_config=plot_config)
-            save_parallel_coordinates(outputs[9], self.scenario.name, series, plot_config=plot_config)
-            save_radar_chart(outputs[10], self.scenario.name, series, plot_config=plot_config)
-            save_convergence_statistics(outputs[11], self.scenario.name, histories, plot_config=plot_config)
-            save_distribution_violin(outputs[12], self.scenario.name, distributions, plot_config=plot_config)
-            save_run_statistics_panel(outputs[13], self.scenario.name, series, plot_config=plot_config)
-            save_summary_dashboard(outputs[14], self.scenario, series, histories_by_label=histories, metrics_by_label=distributions, plot_config=plot_config)
+            save_change_timeline_panel(outputs[2], self.scenario.name, episode, plot_config=plot_config)
+            save_scenario_gallery(outputs[3], {"crossing": self.scenario}, plot_config=plot_config)
+            save_route_bundle_gallery(outputs[4], {"crossing": self.scenario}, {"crossing": {"kemm": [episode], "nsga_style": [episode]}}, plot_config=plot_config)
+            save_dynamic_avoidance_snapshots(outputs[5], self.scenario, episode, plot_config=plot_config)
+            save_spatiotemporal_plot(outputs[6], self.scenario, episode, plot_config=plot_config)
+            save_control_time_series(outputs[7], self.scenario.name, episode, plot_config=plot_config)
+            save_pareto_3d_with_knee(outputs[8], self.scenario.name, episode, plot_config=plot_config)
+            save_pareto_projection_panel(outputs[9], self.scenario.name, episode, plot_config=plot_config)
+            save_risk_breakdown_time_series(outputs[10], self.scenario.name, episode, plot_config=plot_config)
+            save_safety_envelope_plot(outputs[11], self.scenario.name, episode, plot_config=plot_config)
+            save_parallel_coordinates(outputs[12], self.scenario.name, series, plot_config=plot_config)
+            save_radar_chart(outputs[13], self.scenario.name, series, plot_config=plot_config)
+            save_convergence_statistics(outputs[14], self.scenario.name, histories, plot_config=plot_config)
+            save_distribution_violin(outputs[15], self.scenario.name, distributions, plot_config=plot_config)
+            save_run_statistics_panel(outputs[16], self.scenario.name, series, plot_config=plot_config)
+            save_summary_dashboard(outputs[17], self.scenario, series, histories_by_label=histories, metrics_by_label=distributions, plot_config=plot_config)
             for output in outputs:
                 self.assertTrue(output.exists())
                 self.assertGreater(output.stat().st_size, 0)
@@ -365,6 +411,8 @@ class ShipSimulationSmokeTests(unittest.TestCase):
             self.assertTrue(html_path.exists())
             self.assertTrue(spatiotemporal_output.exists())
             self.assertTrue(spatiotemporal_html.exists())
+            self.assertIn("Mean speed", html_path.read_text(encoding="utf-8"))
+            self.assertIn("Own ship", spatiotemporal_html.read_text(encoding="utf-8"))
             self.assertTrue(route_output.exists())
             self.assertFalse(route_bundle.exists())
             self.assertFalse(route_html.exists())
@@ -400,6 +448,9 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         noop_names = [
             "save_environment_overlay",
             "save_route_planning_panel",
+            "save_change_timeline_panel",
+            "save_scenario_gallery",
+            "save_route_bundle_gallery",
             "save_dynamic_avoidance_snapshots",
             "save_spatiotemporal_plot",
             "save_control_time_series",
@@ -416,6 +467,7 @@ class ShipSimulationSmokeTests(unittest.TestCase):
             "_write_csv",
             "_write_json",
             "_write_markdown",
+            "_write_figure_inventory",
         ]
 
         class DummyGenerator:
@@ -472,6 +524,34 @@ class ShipSimulationSmokeTests(unittest.TestCase):
                 except OSError:
                     pass
         self.assertIn("harbor_clutter", recorded)
+
+    def test_figure_manifest_and_inventory_follow_registered_specs(self):
+        tmp_root = Path("ship_simulation/outputs/test_artifacts/manifest_stub")
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        manifest_path = tmp_root / "figure_manifest.json"
+        inventory_path = tmp_root / "figure_inventory.md"
+        try:
+            manifest = run_report_module._figure_manifest(["crossing", "harbor_clutter"])
+            run_report_module._write_json(manifest_path, manifest)
+            run_report_module._write_figure_inventory(inventory_path, ["crossing", "harbor_clutter"])
+            manifest_text = manifest_path.read_text(encoding="utf-8")
+            inventory_text = inventory_path.read_text(encoding="utf-8")
+            self.assertIn("change_timeline", manifest_text)
+            self.assertIn("route_bundle_gallery.png", manifest_text)
+            self.assertIn("crossing_change_timeline.png", inventory_text)
+            self.assertIn("harbor_clutter_dashboard.png", inventory_text)
+        finally:
+            for output in [manifest_path, inventory_path]:
+                if output.exists():
+                    try:
+                        output.unlink()
+                    except PermissionError:
+                        pass
+            if tmp_root.exists():
+                try:
+                    tmp_root.rmdir()
+                except OSError:
+                    pass
 
 
 if __name__ == "__main__":

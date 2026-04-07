@@ -14,6 +14,7 @@ class _DummyConfig:
     N_VAR = 4
     N_OBJ = 2
     N_RUNS = 2
+    SETTINGS = [(5, 10), (10, 10)]
     PROBLEMS = ["FDA1", "FDA2"]
     ALGORITHMS = {"A": object(), "B": object()}
 
@@ -30,20 +31,45 @@ class BenchmarkReportingTests(unittest.TestCase):
                 "FDA2": {"MIGD": [1.2, 1.3], "SP": [0.5, 0.55], "MS": [0.5, 0.6], "TIME": [0.3, 0.35]},
             },
         }
+        setting_results = {
+            "5,10": results,
+            "10,10": results,
+        }
+        ablation_setting_results = {
+            "5,10": {
+                "KEMM-Full": {
+                    "FDA1": {"MIGD": [1.0, 1.1], "SP": [0.3, 0.4], "MS": [0.8, 0.82], "TIME": [0.1, 0.1]},
+                    "FDA2": {"MIGD": [0.9, 1.0], "SP": [0.25, 0.3], "MS": [0.85, 0.86], "TIME": [0.1, 0.1]},
+                }
+            }
+        }
 
-        root = export_benchmark_report(results, _DummyConfig())
+        root = export_benchmark_report(
+            results,
+            _DummyConfig(),
+            setting_results=setting_results,
+            ablation_setting_results=ablation_setting_results,
+        )
 
         self.assertTrue(root.exists())
         self.assertTrue((root / "raw" / "metrics.csv").exists())
         self.assertTrue((root / "raw" / "ranks.csv").exists())
+        self.assertTrue((root / "raw" / "paper_table_metrics.csv").exists())
+        self.assertTrue((root / "raw" / "ablation_setting_metrics.csv").exists())
+        self.assertTrue((root / "raw" / "ablation_delta_metrics.csv").exists())
         self.assertTrue((root / "raw" / "summary.json").exists())
         self.assertTrue((root / "reports" / "summary.md").exists())
 
         payload = json.loads((root / "raw" / "summary.json").read_text(encoding="utf-8"))
         self.assertIn("metrics", payload)
         self.assertIn("ranks", payload)
+        self.assertIn("paper_table_metrics", payload)
+        self.assertIn("ablation_delta_metrics", payload)
         self.assertEqual(len(payload["metrics"]), 4)
         self.assertEqual(payload["ranks"][0]["algorithm"], "A")
+        summary_md = (root / "reports" / "summary.md").read_text(encoding="utf-8")
+        self.assertIn("Paper-Style MIGD Table", summary_md)
+        self.assertIn("Ablation Delta Summary", summary_md)
 
     def test_generate_all_figures_accepts_structured_payload(self):
         results = {
@@ -133,6 +159,10 @@ class BenchmarkReportingTests(unittest.TestCase):
         payload = BenchmarkFigurePayload(
             results=results,
             problems=["FDA1"],
+            setting_results={
+                "5,10": results,
+                "10,10": results,
+            },
             igd_curves=igd_curves,
             hv_curves={
                 "KEMM": {"FDA1": [[0.2, 0.3, 0.35], [0.18, 0.29, 0.36]]},
@@ -147,6 +177,24 @@ class BenchmarkReportingTests(unittest.TestCase):
                     "FDA1": {"MIGD": [1.25, 1.2], "SP": [0.42, 0.43], "MS": [0.72, 0.73], "TIME": [0.1, 0.1]},
                 },
             },
+            ablation_setting_results={
+                "5,10": {
+                    "KEMM-Full": {
+                        "FDA1": {"MIGD": [1.0, 1.05], "SP": [0.31, 0.33], "MS": [0.82, 0.83], "TIME": [0.1, 0.1]},
+                    },
+                    "KEMM-NoMemory": {
+                        "FDA1": {"MIGD": [1.12, 1.1], "SP": [0.36, 0.37], "MS": [0.79, 0.78], "TIME": [0.1, 0.1]},
+                    },
+                },
+                "10,10": {
+                    "KEMM-Full": {
+                        "FDA1": {"MIGD": [0.95, 0.98], "SP": [0.28, 0.29], "MS": [0.84, 0.85], "TIME": [0.1, 0.1]},
+                    },
+                    "KEMM-NoMemory": {
+                        "FDA1": {"MIGD": [1.08, 1.06], "SP": [0.35, 0.36], "MS": [0.8, 0.81], "TIME": [0.1, 0.1]},
+                    },
+                },
+            },
             plot_config=BenchmarkPlotConfig(
                 style=PublicationStyle(dpi=180, title_size=12, label_size=10),
                 rank_bar_width=8.0,
@@ -158,6 +206,7 @@ class BenchmarkReportingTests(unittest.TestCase):
 
         generate_all_figures(payload=payload, output_prefix=str(output_dir / "benchmark"))
 
+        self.assertTrue((output_dir / "benchmark_migd_table.png").exists())
         self.assertTrue((output_dir / "benchmark_migd_bar.png").exists())
         self.assertTrue((output_dir / "benchmark_metrics_grid.png").exists())
         self.assertTrue((output_dir / "benchmark_heatmap.png").exists())

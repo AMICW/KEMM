@@ -67,6 +67,17 @@ python run_experiments.py --quick
 python ship_simulation/run_report.py
 ```
 
+如果你需要更完整的运行命令总表，包括：
+
+- benchmark 快速 / 中等 / 完整实验
+- ship 单次 demo / 快速报告 / 完整物理测试
+- 输出目录与常用可选参数
+
+请直接看：
+
+- `docs/how_to_run.md`
+- `docs/run_commands.md`
+
 ## 5. Windows 说明
 
 在 Windows 环境下，`joblib/loky` 有时会尝试调用 `wmic` 检测 CPU 核心数，可能出现警告栈。
@@ -124,5 +135,7 @@ python run_experiments.py --quick
 
 - `README.md`
 - `AGENTS.md`
+- `docs/how_to_run.md`
+- `docs/run_commands.md`
 - `docs/codebase_reference.md`
 - `docs/visualization_guide.md`

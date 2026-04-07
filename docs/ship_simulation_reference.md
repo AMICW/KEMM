@@ -69,6 +69,9 @@ ship_simulation/
   定义 `EncounterScenario`、动态交通体、静态障碍和场景元信息
 - `generator.py`
   生成当前默认论文场景：`head_on / crossing / overtaking / harbor_clutter`
+- `config.py`
+  `ProblemConfig.scenario_generation` 现在可以直接调场景生成参数，例如 `harbor_clutter` 的障碍数量、障碍尺度、目标船数量和通航窗口宽度
+  `ProblemConfig.experiment` 现在可以直接注入滚动重规划阶段的动态实验变化，例如 drift、shock 和 recurring_harbor
 
 ### 2.3 `optimizer/`
 
@@ -146,6 +149,48 @@ ship_simulation/
 
 这意味着报告图里既可以画环境热图，也可以画矢量背景场。
 
+### 4.4 场景调参入口
+
+如果你想在不改 `generator.py` 的前提下直接调整场景复杂度，优先改：
+
+- `ProblemConfig.scenario_generation.head_on`
+- `ProblemConfig.scenario_generation.crossing`
+- `ProblemConfig.scenario_generation.overtaking`
+- `ProblemConfig.scenario_generation.harbor_clutter`
+
+其中 `harbor_clutter` 额外支持：
+
+- `circular_obstacle_limit`
+- `polygon_obstacle_limit`
+- `target_limit`
+- `circular_radius_scale`
+- `polygon_scale`
+- `channel_width_scale`
+
+这使得场景难度可以通过配置对象直接重现实验，而不是把数值散落回 `generator.py`。
+
+### 4.5 动态实验 profile 入口
+
+如果你想让 ship 主线不只跑静态场景，而是在 rolling-horizon 过程中注入变化，优先改：
+
+- `ProblemConfig.experiment`
+
+或者直接调用：
+
+- `apply_experiment_profile(config, "drift")`
+- `apply_experiment_profile(config, "shock")`
+- `apply_experiment_profile(config, "recurring_harbor")`
+
+当前变化事件支持：
+
+- 环境标量场强度缩放
+- 环境矢量场强度缩放
+- 背景 current 强度缩放
+- 目标船速度缩放
+- 目标船航向偏移
+- 通道宽度收缩
+- 临时 closure 障碍注入
+
 ---
 
 ## 5. 规划流程
@@ -160,7 +205,8 @@ ship 主线现在默认走 episode，而不是一次性全局规划。
 4. 选出代表解
 5. 只执行前一段轨迹
 6. 更新全局时间、本船状态、目标船状态
-7. 继续下一轮重规划，直到到达、风险切断或达到最大重规划次数
+7. 若当前 step 有 experiment schedule，则先注入动态变化
+8. 继续下一轮重规划，直到到达、风险切断或达到最大重规划次数
 
 当前代表解选择规则不是简单“目标最小”，而是：
 
@@ -229,12 +275,29 @@ ship 默认论文图包包括：
 7. 2D Pareto projection panel
 8. 风险分解时间序列图
 9. 安全包络图
-10. Parallel Coordinates
-11. Radar Chart
-12. 带均值线和阴影的收敛曲线
-13. Violin Plot
-14. repeated-run 安全统计图
-15. Summary dashboard
+10. 重规划变化时间轴图
+11. Parallel Coordinates
+12. Radar Chart
+13. 带均值线和阴影的收敛曲线
+14. Violin Plot
+15. repeated-run 安全统计图
+16. Summary dashboard
+
+其中 `pareto3d / spatiotemporal` 在打开 `interactive_html=True` 时会额外导出 Plotly HTML，且 hover 已包含更完整的科研语义信息，而不只是坐标值。
+
+### 8.1 图表注册表
+
+`run_report.py` 现在不再手写逐条调用 inventory 列表，而是使用统一的 figure registry：
+
+- `SCENARIO_FIGURE_SPECS`
+- `GLOBAL_FIGURE_SPECS`
+
+这意味着后续你要新增图时，优先补：
+
+1. 一个 renderer
+2. 一条 figure spec
+
+然后 `figure_inventory.md` 和 `figure_manifest.json` 会自动同步。
 
 附录图默认关闭，只在 `--appendix-plots` 时导出旧条形对比图。
 

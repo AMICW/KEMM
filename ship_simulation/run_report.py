@@ -8,10 +8,10 @@ import json
 import sys
 import time
 from collections import defaultdict
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Mapping, Sequence
 
 import numpy as np
 
@@ -21,11 +21,12 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(repo_root))
 
 from reporting_config import ShipPlotConfig, build_ship_plot_config
-from ship_simulation.config import DemoConfig, build_default_config, build_default_demo_config
+from ship_simulation.config import DemoConfig, apply_experiment_profile, build_default_config, build_default_demo_config
 from ship_simulation.optimizer.episode import PlanningEpisodeResult, RollingHorizonPlanner
 from ship_simulation.scenario.generator import ScenarioGenerator
 from ship_simulation.visualization import (
     ExperimentSeries,
+    save_change_timeline_panel,
     save_control_time_series,
     save_convergence_statistics,
     save_distribution_violin,
@@ -39,11 +40,42 @@ from ship_simulation.visualization import (
     save_risk_breakdown_time_series,
     save_risk_bars,
     save_route_planning_panel,
+    save_route_bundle_gallery,
     save_run_statistics_panel,
     save_safety_envelope_plot,
+    save_scenario_gallery,
     save_spatiotemporal_plot,
     save_summary_dashboard,
 )
+
+
+@dataclass(frozen=True)
+class ScenarioFigureSpec:
+    suffix: str
+    meaning: str
+    renderer_name: str
+
+
+@dataclass(frozen=True)
+class GlobalFigureSpec:
+    file_name: str
+    meaning: str
+    renderer_name: str
+
+
+@dataclass
+class ScenarioFigureContext:
+    scenario_key: str
+    scenario: object
+    best_series: Sequence[ExperimentSeries]
+    histories_by_label: Mapping[str, Sequence[Sequence[dict[str, float]]]]
+    metrics_by_label: Mapping[str, Sequence[dict[str, float]]]
+
+
+@dataclass
+class GlobalFigureContext:
+    scenario_map: Mapping[str, object]
+    aggregate_payload: Mapping[str, Mapping[str, Sequence[PlanningEpisodeResult]]]
 
 
 def _build_quick_demo_config() -> DemoConfig:
@@ -83,6 +115,7 @@ def _episode_row(scenario_key: str, optimizer_name: str, run_index: int, episode
         "scenario_name": episode.scenario_name,
         "optimizer": _optimizer_display_name(optimizer_name),
         "run": int(run_index),
+        "experiment_profile": episode.experiment_profile,
         "fuel": float(episode.final_evaluation.objectives[0]),
         "time": float(episode.final_evaluation.objectives[1]),
         "risk": float(episode.final_evaluation.objectives[2]),
@@ -103,6 +136,7 @@ def _episode_row(scenario_key: str, optimizer_name: str, run_index: int, episode
         "max_commanded_yaw_rate": float(metrics.get("max_commanded_yaw_rate", 0.0)),
         "runtime": float(metrics.get("runtime", 0.0)),
         "planning_steps": float(metrics.get("planning_steps", 0.0)),
+        "scheduled_change_count": float(metrics.get("scheduled_change_count", 0.0)),
         "pareto_size": float(len(episode.pareto_objectives)),
         "snapshot_count": float(len(episode.snapshots)),
         "knee_index": float(episode.knee_index) if episode.knee_index is not None else np.nan,
@@ -138,6 +172,7 @@ def _aggregate_rows(rows: List[dict[str, object]]) -> list[dict[str, object]]:
         "max_commanded_yaw_rate",
         "runtime",
         "planning_steps",
+        "scheduled_change_count",
         "pareto_size",
         "snapshot_count",
         "knee_index",
@@ -244,10 +279,177 @@ def _write_markdown(output_path: Path, aggregates: list[dict[str, object]]) -> N
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _scenario_catalog_entry(scenario, generation_config: object) -> dict[str, object]:
+    circular_count = sum(hasattr(obstacle, "radius") for obstacle in scenario.static_obstacles)
+    polygon_count = len(scenario.static_obstacles) - circular_count
+    return {
+        "name": scenario.name,
+        "area": list(scenario.area),
+        "metadata": asdict(scenario.metadata),
+        "counts": {
+            "targets": len(scenario.target_ships),
+            "static_obstacles": len(scenario.static_obstacles),
+            "circular_obstacles": circular_count,
+            "polygon_obstacles": polygon_count,
+            "scalar_fields": len(scenario.scalar_fields),
+            "vector_fields": len(scenario.vector_fields),
+        },
+        "generation_config": asdict(generation_config),
+    }
+
+
+def _write_figure_inventory(output_path: Path, scenario_keys: Iterable[str]) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Figure Inventory",
+        "",
+        "## Global Figures",
+        "",
+        "| File | Meaning |",
+        "| --- | --- |",
+    ]
+    for spec in GLOBAL_FIGURE_SPECS:
+        lines.append(f"| {spec.file_name} | {spec.meaning} |")
+    lines.extend([
+        "",
+        "## Per-Scenario Figures",
+        "",
+        "| File Pattern | Meaning |",
+        "| --- | --- |",
+    ])
+    for scenario_key in scenario_keys:
+        for spec in SCENARIO_FIGURE_SPECS:
+            lines.append(f"| {scenario_key}_{spec.suffix}.png | {spec.meaning} |")
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def _science_style_tuple(value: str | None) -> tuple[str, ...] | None:
     if not value:
         return None
     return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def _figure_manifest(scenario_keys: Sequence[str]) -> dict[str, object]:
+    return {
+        "global_figures": [
+            {"file_name": spec.file_name, "meaning": spec.meaning, "renderer": spec.renderer_name}
+            for spec in GLOBAL_FIGURE_SPECS
+        ],
+        "scenario_figures": [
+            {
+                "suffix": spec.suffix,
+                "meaning": spec.meaning,
+                "renderer": spec.renderer_name,
+                "files": [f"{scenario_key}_{spec.suffix}.png" for scenario_key in scenario_keys],
+            }
+            for spec in SCENARIO_FIGURE_SPECS
+        ],
+    }
+
+
+def _render_environment_overlay(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_environment_overlay(output_path, context.scenario, context.best_series, plot_config=plot_config)
+
+
+def _render_route_planning_panel(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_route_planning_panel(output_path, context.scenario, context.best_series, plot_config=plot_config)
+
+
+def _render_change_timeline(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_change_timeline_panel(output_path, context.scenario.name, context.best_series[0].episode, plot_config=plot_config)
+
+
+def _render_snapshots(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_dynamic_avoidance_snapshots(output_path, context.scenario, context.best_series[0].episode, plot_config=plot_config)
+
+
+def _render_spatiotemporal(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_spatiotemporal_plot(output_path, context.scenario, context.best_series[0].episode, plot_config=plot_config)
+
+
+def _render_control_timeseries(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_control_time_series(output_path, context.scenario.name, context.best_series[0].episode, plot_config=plot_config)
+
+
+def _render_pareto3d(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_pareto_3d_with_knee(output_path, context.scenario.name, context.best_series[0].episode, plot_config=plot_config)
+
+
+def _render_pareto_projection(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_pareto_projection_panel(output_path, context.scenario.name, context.best_series[0].episode, plot_config=plot_config)
+
+
+def _render_risk_breakdown(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_risk_breakdown_time_series(output_path, context.scenario.name, context.best_series[0].episode, plot_config=plot_config)
+
+
+def _render_safety_envelope(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_safety_envelope_plot(output_path, context.scenario.name, context.best_series[0].episode, plot_config=plot_config)
+
+
+def _render_parallel(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_parallel_coordinates(output_path, context.scenario.name, context.best_series, plot_config=plot_config)
+
+
+def _render_radar(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_radar_chart(output_path, context.scenario.name, context.best_series, plot_config=plot_config)
+
+
+def _render_convergence(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_convergence_statistics(output_path, context.scenario.name, context.histories_by_label, plot_config=plot_config)
+
+
+def _render_distribution(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_distribution_violin(output_path, context.scenario.name, context.metrics_by_label, plot_config=plot_config)
+
+
+def _render_run_statistics(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_run_statistics_panel(output_path, context.scenario.name, context.best_series, plot_config=plot_config)
+
+
+def _render_dashboard(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_summary_dashboard(
+        output_path,
+        context.scenario,
+        context.best_series,
+        histories_by_label=context.histories_by_label,
+        metrics_by_label=context.metrics_by_label,
+        plot_config=plot_config,
+    )
+
+
+def _render_scenario_gallery(context: GlobalFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_scenario_gallery(output_path, context.scenario_map, plot_config=plot_config)
+
+
+def _render_route_bundle_gallery(context: GlobalFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_route_bundle_gallery(output_path, context.scenario_map, context.aggregate_payload, plot_config=plot_config)
+
+
+SCENARIO_FIGURE_SPECS = (
+    ScenarioFigureSpec("environment_overlay", "环境场叠加轨迹图", "_render_environment_overlay"),
+    ScenarioFigureSpec("route_planning_panel", "复杂海域路线规划主图", "_render_route_planning_panel"),
+    ScenarioFigureSpec("change_timeline", "重规划变化时间轴图", "_render_change_timeline"),
+    ScenarioFigureSpec("snapshots", "动态避碰时序快照", "_render_snapshots"),
+    ScenarioFigureSpec("spatiotemporal", "三维时空轨迹图", "_render_spatiotemporal"),
+    ScenarioFigureSpec("control_timeseries", "控制与动力学时序", "_render_control_timeseries"),
+    ScenarioFigureSpec("pareto3d", "3D Pareto 前沿图", "_render_pareto3d"),
+    ScenarioFigureSpec("pareto_projection", "二维 Pareto 投影视图", "_render_pareto_projection"),
+    ScenarioFigureSpec("risk_breakdown", "风险分解时间序列", "_render_risk_breakdown"),
+    ScenarioFigureSpec("safety_envelope", "安全包络图", "_render_safety_envelope"),
+    ScenarioFigureSpec("parallel", "Parallel coordinates", "_render_parallel"),
+    ScenarioFigureSpec("radar", "Radar 图", "_render_radar"),
+    ScenarioFigureSpec("convergence", "收敛统计图", "_render_convergence"),
+    ScenarioFigureSpec("distribution", "分布 violin 图", "_render_distribution"),
+    ScenarioFigureSpec("run_statistics", "重复运行统计图", "_render_run_statistics"),
+    ScenarioFigureSpec("dashboard", "摘要 dashboard", "_render_dashboard"),
+)
+
+
+GLOBAL_FIGURE_SPECS = (
+    GlobalFigureSpec("scenario_gallery.png", "多场景环境总览图", "_render_scenario_gallery"),
+    GlobalFigureSpec("route_bundle_gallery.png", "多场景最终轨迹带对比图", "_render_route_bundle_gallery"),
+)
 
 
 def generate_report(output_root: Path | None = None, plot_config: ShipPlotConfig | None = None) -> Path:
@@ -288,6 +490,7 @@ def generate_report_with_config(
     scenario_rows: list[dict[str, object]] = []
     aggregate_payload: dict[str, dict[str, list[PlanningEpisodeResult]]] = defaultdict(dict)
     step_payload: dict[str, dict[str, list[dict[str, object]]]] = defaultdict(dict)
+    scenario_map: dict[str, object] = {}
     t0 = time.time()
 
     if verbose:
@@ -295,10 +498,12 @@ def generate_report_with_config(
         print("This command exports figures to disk; it does not open interactive animation windows.", flush=True)
         print(f"Output directory: {root}", flush=True)
         print(f"Scenarios: {', '.join(scenario_keys)}", flush=True)
+        print(f"Experiment profile: {config.experiment.profile_name}", flush=True)
         print(f"Algorithms: {', '.join(algorithms)} | Runs per algorithm: {run_count}", flush=True)
 
     for scenario_index, scenario_key in enumerate(scenario_keys, start=1):
         scenario = generator.generate(scenario_key)
+        scenario_map[scenario_key] = scenario
         if verbose:
             print(f"[{scenario_index}/{len(scenario_keys)}] Scenario `{scenario_key}`", flush=True)
         aggregate_payload[scenario_key] = {}
@@ -339,6 +544,7 @@ def generate_report_with_config(
                                 "step_index": step.step_index,
                                 "start_time": step.start_time,
                                 "runtime": step.runtime_s,
+                                "applied_changes": list(step.applied_changes),
                                 "objectives": step.selected_evaluation.objectives.tolist(),
                                 "terminal_distance": step.selected_evaluation.terminal_distance,
                                 "risk_max": step.selected_evaluation.risk.max_risk,
@@ -380,29 +586,54 @@ def generate_report_with_config(
         ]
         histories_by_label = {series.label: series.histories for series in best_series}
         metrics_by_label = {series.label: series.distribution_metrics for series in best_series}
-
-        save_environment_overlay(figures_dir / f"{scenario_key}_environment_overlay.png", scenario, best_series, plot_config=plot_config)
-        save_route_planning_panel(figures_dir / f"{scenario_key}_route_planning_panel.png", scenario, best_series, plot_config=plot_config)
-        save_dynamic_avoidance_snapshots(figures_dir / f"{scenario_key}_snapshots.png", scenario, best_series[0].episode, plot_config=plot_config)
-        save_spatiotemporal_plot(figures_dir / f"{scenario_key}_spatiotemporal.png", scenario, best_series[0].episode, plot_config=plot_config)
-        save_control_time_series(figures_dir / f"{scenario_key}_control_timeseries.png", scenario.name, best_series[0].episode, plot_config=plot_config)
-        save_pareto_3d_with_knee(figures_dir / f"{scenario_key}_pareto3d.png", scenario.name, best_series[0].episode, plot_config=plot_config)
-        save_pareto_projection_panel(figures_dir / f"{scenario_key}_pareto_projection.png", scenario.name, best_series[0].episode, plot_config=plot_config)
-        save_risk_breakdown_time_series(figures_dir / f"{scenario_key}_risk_breakdown.png", scenario.name, best_series[0].episode, plot_config=plot_config)
-        save_safety_envelope_plot(figures_dir / f"{scenario_key}_safety_envelope.png", scenario.name, best_series[0].episode, plot_config=plot_config)
-        save_parallel_coordinates(figures_dir / f"{scenario_key}_parallel.png", scenario.name, best_series, plot_config=plot_config)
-        save_radar_chart(figures_dir / f"{scenario_key}_radar.png", scenario.name, best_series, plot_config=plot_config)
-        save_convergence_statistics(figures_dir / f"{scenario_key}_convergence.png", scenario.name, histories_by_label, plot_config=plot_config)
-        save_distribution_violin(figures_dir / f"{scenario_key}_distribution.png", scenario.name, metrics_by_label, plot_config=plot_config)
-        save_run_statistics_panel(figures_dir / f"{scenario_key}_run_statistics.png", scenario.name, best_series, plot_config=plot_config)
-        save_summary_dashboard(figures_dir / f"{scenario_key}_dashboard.png", scenario, best_series, histories_by_label=histories_by_label, metrics_by_label=metrics_by_label, plot_config=plot_config)
+        scenario_context = ScenarioFigureContext(
+            scenario_key=scenario_key,
+            scenario=scenario,
+            best_series=best_series,
+            histories_by_label=histories_by_label,
+            metrics_by_label=metrics_by_label,
+        )
+        for spec in SCENARIO_FIGURE_SPECS:
+            output_path = figures_dir / f"{scenario_key}_{spec.suffix}.png"
+            renderer = globals()[spec.renderer_name]
+            renderer(scenario_context, output_path, plot_config)
 
     aggregates = _aggregate_rows(scenario_rows)
+    global_context = GlobalFigureContext(scenario_map=scenario_map, aggregate_payload=aggregate_payload)
+    for spec in GLOBAL_FIGURE_SPECS:
+        output_path = figures_dir / spec.file_name
+        renderer = globals()[spec.renderer_name]
+        renderer(global_context, output_path, plot_config)
     _write_csv(raw_dir / "summary.csv", scenario_rows)
     _write_csv(raw_dir / "aggregate_summary.csv", aggregates)
     _write_json(raw_dir / "summary.json", {"runs": scenario_rows, "aggregates": aggregates})
     _write_json(raw_dir / "planning_steps.json", step_payload)
+    _write_json(raw_dir / "figure_manifest.json", _figure_manifest(list(scenario_keys)))
+    _write_json(
+        raw_dir / "scenario_catalog.json",
+        {
+            key: _scenario_catalog_entry(scenario, getattr(config.scenario_generation, key))
+            for key, scenario in scenario_map.items()
+        },
+    )
+    _write_json(
+        raw_dir / "report_metadata.json",
+        {
+            "scenario_keys": list(scenario_keys),
+            "algorithms": algorithms,
+            "n_runs": run_count,
+            "plot_preset": demo_config.plot_preset,
+            "experiment_profile": config.experiment.profile_name,
+            "experiment_enabled": bool(config.experiment.enabled),
+            "experiment_config": asdict(config.experiment),
+            "appendix_plots": bool(plot_config.appendix_plots),
+            "interactive_figures": bool(plot_config.interactive_figures),
+            "interactive_html": bool(plot_config.interactive_html),
+            "elapsed_seconds": float(time.time() - t0),
+        },
+    )
     _write_markdown(reports_dir / "summary.md", aggregates)
+    _write_figure_inventory(reports_dir / "figure_inventory.md", scenario_keys)
 
     # 附录图只保留旧柱状对比图，不再作为默认主图。
     if plot_config.appendix_plots:
@@ -441,6 +672,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate ship simulation report.")
     parser.add_argument("--quick", action="store_true", help="Run a lightweight smoke configuration.")
     parser.add_argument("--plot-preset", default="paper", help="Plot preset: default/paper/ieee/nature/thesis.")
+    parser.add_argument("--experiment-profile", default="baseline", help="Ship experiment profile: baseline/drift/shock/recurring_harbor.")
     parser.add_argument("--science-style", default="", help="Comma-separated SciencePlots style tuple, e.g. science,ieee,no-latex.")
     parser.add_argument("--n-runs", type=int, default=None, help="Number of repeated runs per algorithm and scenario.")
     parser.add_argument("--scenarios", nargs="*", default=None, help="Scenario keys to run.")
@@ -453,6 +685,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     config = build_default_config()
+    apply_experiment_profile(config, args.experiment_profile)
     demo_config = _build_quick_demo_config() if args.quick else build_default_demo_config()
     demo_config.plot_preset = args.plot_preset
     demo_config.appendix_plots = bool(args.appendix_plots)

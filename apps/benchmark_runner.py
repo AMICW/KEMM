@@ -75,6 +75,8 @@ class ExperimentConfig:
     N_OBJ = 2
     NT = 10
     TAU_T = 10
+    SETTINGS = [(5, 10), (10, 10), (10, 20)]
+    CANONICAL_SETTING = (10, 10)
     N_CHANGES = 10
     GENS_PER_CHANGE = 20
     N_RUNS = 5
@@ -94,10 +96,14 @@ class ExperimentConfig:
         "KEMM": KEMM_DMOEA_Improved,
     }
 
-    ABLATION_ALGORITHMS = {
-        "KEMM-Full": KEMM_DMOEA_Improved,
-        "MMTL-Original": MMTL_DMOEA,
+    ABLATION_VARIANTS = {
+        "KEMM-Full": {"config_overrides": {}},
+        "KEMM-NoMemory": {"config_overrides": {"enable_memory": False}},
+        "KEMM-NoPrediction": {"config_overrides": {"enable_prediction": False}},
+        "KEMM-NoTransfer": {"config_overrides": {"enable_transfer": False}},
+        "KEMM-NoAdaptive": {"config_overrides": {"enable_adaptive": False}},
     }
+    ABLATION_BENCHMARK_PRIOR = False
     KEMM_CONFIG = RuntimeKEMMConfig()
 
 
@@ -111,96 +117,183 @@ class ExperimentRunner:
         self.cfg = config or ExperimentConfig()
         self.problems = DynamicTestProblems(nt=self.cfg.NT, tau_t=self.cfg.TAU_T)
         self.metrics = PerformanceMetrics()
+        self.setting_results: Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]] = {}
+        self.setting_igd_curves: Dict[str, Dict[str, Dict[str, List[List[float]]]]] = {}
+        self.setting_hv_curves: Dict[str, Dict[str, Dict[str, List[List[float]]]]] = {}
+        self.setting_algorithm_diagnostics: Dict[str, Dict[str, Dict[str, List[list]]]] = {}
         self.results: Dict[str, Dict[str, Dict[str, List[float]]]] = {}
         self.igd_curves: Dict[str, Dict[str, List[List[float]]]] = {}
         self.hv_curves: Dict[str, Dict[str, List[List[float]]]] = {}
         self.algorithm_diagnostics: Dict[str, Dict[str, List[list]]] = {}
+        self.ablation_setting_results: Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]] = {}
         self.ablation_results: Dict[str, Dict[str, Dict[str, List[float]]]] = {}
+
+    @staticmethod
+    def _setting_key(setting: tuple[int, int]) -> str:
+        return f"{int(setting[0])},{int(setting[1])}"
+
+    @staticmethod
+    def _parse_setting_key(setting_key: str) -> tuple[int, int]:
+        nt_str, tau_t_str = setting_key.split(",", maxsplit=1)
+        return int(nt_str), int(tau_t_str)
+
+    def _canonical_setting_key(self) -> str:
+        return self._setting_key(tuple(self.cfg.CANONICAL_SETTING))
+
+    def _instantiate_algorithm(self, algo_spec, lb: np.ndarray, ub: np.ndarray):
+        algo_class = algo_spec
+        config_overrides = {}
+        benchmark_aware_prior = True
+        if isinstance(algo_spec, dict):
+            algo_class = algo_spec.get("algorithm", KEMM_DMOEA_Improved)
+            config_overrides = dict(algo_spec.get("config_overrides", {}))
+            benchmark_aware_prior = bool(algo_spec.get("benchmark_aware_prior", True))
+
+        if algo_class is KEMM_DMOEA_Improved:
+            base_config = self.cfg.KEMM_CONFIG or RuntimeKEMMConfig()
+            kemm_config = replace(
+                base_config,
+                pop_size=self.cfg.POP_SIZE,
+                n_var=self.cfg.N_VAR,
+                n_obj=self.cfg.N_OBJ,
+                benchmark_aware_prior=benchmark_aware_prior,
+                **config_overrides,
+            )
+            return algo_class(
+                self.cfg.POP_SIZE,
+                self.cfg.N_VAR,
+                self.cfg.N_OBJ,
+                (lb, ub),
+                config=kemm_config,
+                benchmark_adapter=BenchmarkPriorAdapter() if benchmark_aware_prior else None,
+                benchmark_aware_prior=benchmark_aware_prior,
+            )
+        return algo_class(self.cfg.POP_SIZE, self.cfg.N_VAR, self.cfg.N_OBJ, (lb, ub))
+
+    def _initialize_metric_bucket(self, algorithms: Dict[str, object]) -> Dict[str, Dict[str, Dict[str, List[float]]]]:
+        return {
+            algo_name: {
+                prob_name: {"MIGD": [], "SP": [], "MS": [], "TIME": []}
+                for prob_name in self.cfg.PROBLEMS
+            }
+            for algo_name in algorithms
+        }
+
+    def _initialize_curve_bucket(self, algorithms: Dict[str, object]) -> Dict[str, Dict[str, List[List[float]]]]:
+        return {
+            algo_name: {prob_name: [] for prob_name in self.cfg.PROBLEMS}
+            for algo_name in algorithms
+        }
+
+    def _run_setting_sweep(
+        self,
+        algorithms: Dict[str, object],
+        *,
+        progress_prefix: str,
+        collect_curves: bool,
+        collect_diagnostics: bool,
+    ):
+        setting_results: Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]] = {}
+        setting_igd_curves: Dict[str, Dict[str, Dict[str, List[List[float]]]]] = {}
+        setting_hv_curves: Dict[str, Dict[str, Dict[str, List[List[float]]]]] = {}
+        setting_diagnostics: Dict[str, Dict[str, Dict[str, List[list]]]] = {}
+
+        total = len(self.cfg.SETTINGS) * len(algorithms) * len(self.cfg.PROBLEMS) * self.cfg.N_RUNS
+        counter = 0
+        t_start = time.time()
+        for setting in self.cfg.SETTINGS:
+            nt, tau_t = int(setting[0]), int(setting[1])
+            setting_key = self._setting_key((nt, tau_t))
+            problem_suite = DynamicTestProblems(nt=nt, tau_t=tau_t)
+            setting_results[setting_key] = self._initialize_metric_bucket(algorithms)
+            if collect_curves:
+                setting_igd_curves[setting_key] = self._initialize_curve_bucket(algorithms)
+                setting_hv_curves[setting_key] = self._initialize_curve_bucket(algorithms)
+            if collect_diagnostics:
+                setting_diagnostics[setting_key] = self._initialize_curve_bucket(algorithms)
+
+            for algo_name, algo_spec in algorithms.items():
+                for prob_name in self.cfg.PROBLEMS:
+                    obj_func, pof_func = problem_suite.get_problem(prob_name)
+                    for run in range(self.cfg.N_RUNS):
+                        counter += 1
+                        elapsed = time.time() - t_start
+                        rate = counter / (elapsed + 1e-6)
+                        eta = (total - counter) / (rate + 1e-6)
+                        print(
+                            f"\r  [{progress_prefix} {counter:4d}/{total}] ({nt:>2d},{tau_t:>2d}) "
+                            f"{algo_name:>16s}|{prob_name:>5s}|R{run+1} | "
+                            f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
+                            end="",
+                            flush=True,
+                        )
+                        seed_offset = sum((index + 1) * ord(ch) for index, ch in enumerate(f"{setting_key}:{algo_name}")) % 10000
+                        np.random.seed(run * 1000 + seed_offset)
+                        result = self._run_single(algo_spec, obj_func, pof_func, problem_suite=problem_suite)
+                        metrics = setting_results[setting_key][algo_name][prob_name]
+                        metrics["MIGD"].append(result["migd"])
+                        metrics["SP"].append(result["sp"])
+                        metrics["MS"].append(result["ms"])
+                        metrics["TIME"].append(result["time"])
+                        if collect_curves:
+                            setting_igd_curves[setting_key][algo_name][prob_name].append(result["igd_curve"])
+                            setting_hv_curves[setting_key][algo_name][prob_name].append(result["hv_curve"])
+                        if collect_diagnostics:
+                            setting_diagnostics[setting_key][algo_name][prob_name].append(result["change_diagnostics"])
+
+        print(f"\n  完成, 总耗时 {time.time() - t_start:.1f}s")
+        return setting_results, setting_igd_curves, setting_hv_curves, setting_diagnostics
 
     def run_all(self):
         """运行所有算法、问题和重复次数的组合实验。"""
 
-        total = len(self.cfg.ALGORITHMS) * len(self.cfg.PROBLEMS) * self.cfg.N_RUNS
-        counter = 0
-        t_start = time.time()
-
-        for algo_name, algo_class in self.cfg.ALGORITHMS.items():
-            self.results[algo_name] = {}
-            self.igd_curves[algo_name] = {}
-            self.hv_curves[algo_name] = {}
-            self.algorithm_diagnostics[algo_name] = {}
-            for prob_name in self.cfg.PROBLEMS:
-                self.results[algo_name][prob_name] = {"MIGD": [], "SP": [], "MS": [], "TIME": []}
-                self.igd_curves[algo_name][prob_name] = []
-                self.hv_curves[algo_name][prob_name] = []
-                self.algorithm_diagnostics[algo_name][prob_name] = []
-                obj_func, pof_func = self.problems.get_problem(prob_name)
-
-                for run in range(self.cfg.N_RUNS):
-                    counter += 1
-                    elapsed = time.time() - t_start
-                    rate = counter / (elapsed + 1e-6)
-                    eta = (total - counter) / (rate + 1e-6)
-                    print(
-                        f"\r  [{counter:4d}/{total}] {algo_name:>6s}|{prob_name:>5s}|R{run+1} | "
-                        f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
-                        end="",
-                        flush=True,
-                    )
-
-                    seed_offset = sum((index + 1) * ord(ch) for index, ch in enumerate(algo_name)) % 10000
-                    np.random.seed(run * 1000 + seed_offset)
-                    result = self._run_single(algo_class, obj_func, pof_func)
-                    self.results[algo_name][prob_name]["MIGD"].append(result["migd"])
-                    self.results[algo_name][prob_name]["SP"].append(result["sp"])
-                    self.results[algo_name][prob_name]["MS"].append(result["ms"])
-                    self.results[algo_name][prob_name]["TIME"].append(result["time"])
-                    self.igd_curves[algo_name][prob_name].append(result["igd_curve"])
-                    self.hv_curves[algo_name][prob_name].append(result["hv_curve"])
-                    self.algorithm_diagnostics[algo_name][prob_name].append(result["change_diagnostics"])
-
-        total_time = time.time() - t_start
-        print(f"\n  完成, 总耗时 {total_time:.1f}s")
+        (
+            self.setting_results,
+            self.setting_igd_curves,
+            self.setting_hv_curves,
+            self.setting_algorithm_diagnostics,
+        ) = self._run_setting_sweep(
+            self.cfg.ALGORITHMS,
+            progress_prefix="RUN",
+            collect_curves=True,
+            collect_diagnostics=True,
+        )
+        canonical_key = self._canonical_setting_key()
+        nt, tau_t = self._parse_setting_key(canonical_key)
+        self.problems = DynamicTestProblems(nt=nt, tau_t=tau_t)
+        self.results = self.setting_results.get(canonical_key, {})
+        self.igd_curves = self.setting_igd_curves.get(canonical_key, {})
+        self.hv_curves = self.setting_hv_curves.get(canonical_key, {})
+        self.algorithm_diagnostics = self.setting_algorithm_diagnostics.get(canonical_key, {})
         return self.results
 
     def run_ablation_all(self):
         """运行默认消融对比。"""
 
         self.ablation_results = {}
-        if not self.cfg.ABLATION_ALGORITHMS:
+        self.ablation_setting_results = {}
+        if not getattr(self.cfg, "ABLATION_VARIANTS", None):
             return self.ablation_results
 
         print("\n  运行消融/对照变体...", flush=True)
-        total = len(self.cfg.ABLATION_ALGORITHMS) * len(self.cfg.PROBLEMS) * self.cfg.N_RUNS
-        counter = 0
-        t_start = time.time()
-        for algo_name, algo_class in self.cfg.ABLATION_ALGORITHMS.items():
-            self.ablation_results[algo_name] = {}
-            for prob_name in self.cfg.PROBLEMS:
-                self.ablation_results[algo_name][prob_name] = {"MIGD": [], "SP": [], "MS": [], "TIME": []}
-                obj_func, pof_func = self.problems.get_problem(prob_name)
-                for run in range(self.cfg.N_RUNS):
-                    counter += 1
-                    elapsed = time.time() - t_start
-                    rate = counter / (elapsed + 1e-6)
-                    eta = (total - counter) / (rate + 1e-6)
-                    print(
-                        f"\r  [ABL {counter:3d}/{total}] {algo_name:>12s}|{prob_name:>5s}|R{run+1} | "
-                        f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
-                        end="",
-                        flush=True,
-                    )
-                    seed_offset = sum((index + 1) * ord(ch) for index, ch in enumerate(algo_name)) % 10000
-                    np.random.seed(run * 1000 + seed_offset)
-                    result = self._run_single(algo_class, obj_func, pof_func)
-                    self.ablation_results[algo_name][prob_name]["MIGD"].append(result["migd"])
-                    self.ablation_results[algo_name][prob_name]["SP"].append(result["sp"])
-                    self.ablation_results[algo_name][prob_name]["MS"].append(result["ms"])
-                    self.ablation_results[algo_name][prob_name]["TIME"].append(result["time"])
-        print(f"\n  消融完成, 总耗时 {time.time() - t_start:.1f}s")
+        ablation_algorithms = {
+            variant_name: {
+                "algorithm": KEMM_DMOEA_Improved,
+                "benchmark_aware_prior": bool(getattr(self.cfg, "ABLATION_BENCHMARK_PRIOR", False)),
+                **variant_spec,
+            }
+            for variant_name, variant_spec in self.cfg.ABLATION_VARIANTS.items()
+        }
+        self.ablation_setting_results, _, _, _ = self._run_setting_sweep(
+            ablation_algorithms,
+            progress_prefix="ABL",
+            collect_curves=False,
+            collect_diagnostics=False,
+        )
+        self.ablation_results = self.ablation_setting_results.get(self._canonical_setting_key(), {})
         return self.ablation_results
 
-    def _run_single(self, algo_class, obj_func, pof_func):
+    def _run_single(self, algo_spec, obj_func, pof_func, problem_suite=None):
         """运行一次单算法-单问题实验。
 
         这一步内部还包含多个环境变化阶段。
@@ -218,24 +311,7 @@ class ExperimentRunner:
         lb[1:] = -1.0
         ub[1:] = 1.0
 
-        if algo_class is KEMM_DMOEA_Improved:
-            kemm_config = replace(
-                self.cfg.KEMM_CONFIG,
-                pop_size=self.cfg.POP_SIZE,
-                n_var=self.cfg.N_VAR,
-                n_obj=self.cfg.N_OBJ,
-                benchmark_aware_prior=True,
-            )
-            algo = algo_class(
-                self.cfg.POP_SIZE,
-                self.cfg.N_VAR,
-                self.cfg.N_OBJ,
-                (lb, ub),
-                config=kemm_config,
-                benchmark_adapter=BenchmarkPriorAdapter(),
-            )
-        else:
-            algo = algo_class(self.cfg.POP_SIZE, self.cfg.N_VAR, self.cfg.N_OBJ, (lb, ub))
+        algo = self._instantiate_algorithm(algo_spec, lb, ub)
         algo.initialize()
         t0 = time.time()
 
@@ -244,9 +320,10 @@ class ExperimentRunner:
         sp_list: List[float] = []
         ms_list: List[float] = []
         generation = 0
+        problem_suite = problem_suite or self.problems
 
         for change_index in range(self.cfg.N_CHANGES):
-            t = self.problems.get_time(generation)
+            t = problem_suite.get_time(generation)
 
             if change_index == 0:
                 algo.fitness = algo.evaluate(algo.population, obj_func, t)
@@ -308,13 +385,25 @@ def wilcoxon_test(ours: list, others: list, alpha: float = 0.05) -> str:
 class ResultPresenter:
     """benchmark 结果展示器。"""
 
-    def __init__(self, results, config, igd_curves=None, hv_curves=None, algorithm_diagnostics=None, ablation_results=None):
+    def __init__(
+        self,
+        results,
+        config,
+        igd_curves=None,
+        hv_curves=None,
+        algorithm_diagnostics=None,
+        ablation_results=None,
+        setting_results=None,
+        ablation_setting_results=None,
+    ):
         self.results = results
         self.cfg = config
         self.igd_curves = igd_curves or {}
         self.hv_curves = hv_curves or {}
         self.algorithm_diagnostics = algorithm_diagnostics or {}
         self.ablation_results = ablation_results or {}
+        self.setting_results = setting_results or {}
+        self.ablation_setting_results = ablation_setting_results or {}
         self.our_algo = "KEMM"
 
     def print_tables(self):
@@ -408,7 +497,9 @@ class ResultPresenter:
             igd_curves=self.igd_curves,
             hv_curves=self.hv_curves,
             diagnostics=self.algorithm_diagnostics,
+            setting_results=self.setting_results,
             ablation_results=self.ablation_results,
+            ablation_setting_results=self.ablation_setting_results,
             plot_config=plot_config if plot_config is not None else BenchmarkPlotConfig(),
         )
         generate_all_figures(payload=payload, output_prefix=prefix)
@@ -591,12 +682,21 @@ def run_benchmark(
         hv_curves=runner.hv_curves,
         algorithm_diagnostics=runner.algorithm_diagnostics,
         ablation_results=ablation_results,
+        setting_results=runner.setting_results,
+        ablation_setting_results=runner.ablation_setting_results,
     )
     print()
     presenter.print_tables()
     presenter.print_ranking()
     presenter.plot_all(prefix=figures_prefix, plot_config=plot_config)
-    export_benchmark_report(results, cfg, output_root=report_root, ablation_results=ablation_results)
+    export_benchmark_report(
+        results,
+        cfg,
+        output_root=report_root,
+        ablation_results=ablation_results,
+        setting_results=runner.setting_results,
+        ablation_setting_results=runner.ablation_setting_results,
+    )
     print(f"\n  报告输出目录: {report_root}")
     return results
 

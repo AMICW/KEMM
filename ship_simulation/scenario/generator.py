@@ -33,6 +33,21 @@ class ScenarioGenerator:
         self.config = config
 
     @staticmethod
+    def _stable_seed(key: str) -> int:
+        return sum((index + 1) * ord(ch) for index, ch in enumerate(key)) % 1_000_003
+
+    def _scenario_rng(self, scenario_key: str, tuning: ScenarioTuningConfig):
+        if tuning.scenario_seed is None:
+            return None
+        return np.random.default_rng(int(tuning.scenario_seed) + self._stable_seed(scenario_key))
+
+    @staticmethod
+    def _jitter_xy(point: np.ndarray, rng, magnitude: float) -> np.ndarray:
+        if rng is None or magnitude <= 0.0:
+            return np.asarray(point, dtype=float)
+        return np.asarray(point, dtype=float) + rng.normal(0.0, float(magnitude), size=2)
+
+    @staticmethod
     def _offset_xy(point: np.ndarray, offset: tuple[float, float]) -> np.ndarray:
         return np.asarray(point, dtype=float) + np.asarray(offset, dtype=float)
 
@@ -55,25 +70,38 @@ class ScenarioGenerator:
         *,
         apply_goal_offset: bool,
         target: bool = False,
+        rng=None,
     ) -> VesselAgent:
-        speed_scale = tuning.target_speed_scale if target else tuning.own_speed_scale
+        difficulty = max(float(tuning.difficulty_scale), 0.25)
+        speed_scale = (tuning.target_speed_scale * difficulty) if target else tuning.own_speed_scale
         state_offset = tuning.goal_offset if target else tuning.start_offset
+        jittered_position = self._jitter_xy(
+            np.array([agent.initial_state.x + state_offset[0], agent.initial_state.y + state_offset[1]], dtype=float),
+            rng,
+            tuning.geometry_jitter_m,
+        )
+        heading = float(agent.initial_state.heading)
+        if target and rng is not None and tuning.traffic_heading_jitter_deg > 0.0:
+            heading += float(rng.normal(0.0, np.deg2rad(tuning.traffic_heading_jitter_deg)))
         state = replace(
             agent.initial_state,
-            x=float(agent.initial_state.x + state_offset[0]),
-            y=float(agent.initial_state.y + state_offset[1]),
+            x=float(jittered_position[0]),
+            y=float(jittered_position[1]),
+            heading=heading,
             speed=float(agent.initial_state.speed * speed_scale),
         )
         goal = agent.goal
         if apply_goal_offset and goal is not None:
             goal = self._offset_xy(goal, tuning.goal_offset)
+            goal = self._jitter_xy(goal, rng, tuning.geometry_jitter_m * 0.6)
         return replace(agent, initial_state=state, goal=None if goal is None else np.asarray(goal, dtype=float))
 
-    def _tuned_circular_obstacle(self, obstacle: CircularObstacle, tuning: ScenarioTuningConfig) -> CircularObstacle:
+    def _tuned_circular_obstacle(self, obstacle: CircularObstacle, tuning: ScenarioTuningConfig, *, rng=None) -> CircularObstacle:
+        difficulty = max(float(tuning.difficulty_scale), 0.25)
         return replace(
             obstacle,
-            center=self._offset_xy(obstacle.center, tuning.goal_offset),
-            radius=float(obstacle.radius * tuning.circular_radius_scale),
+            center=self._jitter_xy(self._offset_xy(obstacle.center, tuning.goal_offset), rng, tuning.geometry_jitter_m),
+            radius=float(obstacle.radius * tuning.circular_radius_scale * difficulty),
         )
 
     def _tuned_polygon_obstacle(
@@ -83,42 +111,61 @@ class ScenarioGenerator:
         *,
         scale: float | None = None,
         y_scale: float = 1.0,
+        rng=None,
     ):
         vertices = np.asarray(obstacle.vertices, dtype=float)
         shifted = vertices.copy()
         shifted[:, 0] += tuning.goal_offset[0]
         shifted[:, 1] += tuning.goal_offset[1]
+        if rng is not None and tuning.geometry_jitter_m > 0.0:
+            shifted += rng.normal(0.0, tuning.geometry_jitter_m * 0.45, size=shifted.shape)
         centroid = np.mean(shifted, axis=0)
         shifted[:, 1] = centroid[1] + y_scale * (shifted[:, 1] - centroid[1])
-        tuned_scale = float(scale if scale is not None else tuning.polygon_scale)
+        tuned_scale = float(scale if scale is not None else tuning.polygon_scale) * max(float(tuning.difficulty_scale), 0.25)
         return replace(obstacle, vertices=self._scale_polygon_vertices(shifted, tuned_scale))
 
-    def _scale_scalar_fields(self, fields: list, amplitude_scale: float) -> list:
+    def _scale_scalar_fields(self, fields: list, amplitude_scale: float, *, rng=None, tuning: ScenarioTuningConfig | None = None) -> list:
         tuned = []
+        tuning = tuning or ScenarioTuningConfig()
+        effective_scale = amplitude_scale * max(float(tuning.difficulty_scale), 0.25)
         for field in fields:
             if isinstance(field, GaussianScalarField):
-                tuned.append(replace(field, amplitude=float(field.amplitude * amplitude_scale)))
+                center = np.asarray(field.center, dtype=float)
+                center = self._jitter_xy(center, rng, tuning.geometry_jitter_m * 0.5)
+                tuned.append(replace(field, center=center, amplitude=float(field.amplitude * effective_scale)))
             elif isinstance(field, GridScalarField):
-                tuned.append(replace(field, values=np.asarray(field.values, dtype=float) * amplitude_scale))
+                tuned.append(replace(field, values=np.asarray(field.values, dtype=float) * effective_scale))
             else:
                 tuned.append(field)
         return tuned
 
-    def _scale_vector_fields(self, fields: list, speed_scale: float) -> list:
+    def _scale_vector_fields(self, fields: list, speed_scale: float, *, rng=None, tuning: ScenarioTuningConfig | None = None) -> list:
         tuned = []
+        tuning = tuning or ScenarioTuningConfig()
+        effective_scale = speed_scale * max(float(tuning.difficulty_scale), 0.25)
+        direction_delta = 0.0
+        if rng is not None and tuning.current_direction_jitter_deg > 0.0:
+            direction_delta = float(rng.normal(0.0, tuning.current_direction_jitter_deg))
         for field in fields:
             if isinstance(field, UniformVectorField):
-                tuned.append(replace(field, speed=float(field.speed * speed_scale)))
+                tuned.append(
+                    replace(
+                        field,
+                        speed=float(field.speed * effective_scale),
+                        direction_deg=float(field.direction_deg + direction_delta),
+                    )
+                )
             elif isinstance(field, GridVectorField):
                 tuned.append(
                     replace(
                         field,
-                        u_values=np.asarray(field.u_values, dtype=float) * speed_scale,
-                        v_values=np.asarray(field.v_values, dtype=float) * speed_scale,
+                        u_values=np.asarray(field.u_values, dtype=float) * effective_scale,
+                        v_values=np.asarray(field.v_values, dtype=float) * effective_scale,
                     )
                 )
             elif isinstance(field, VortexVectorField):
-                tuned.append(replace(field, strength=float(field.strength * speed_scale)))
+                center = self._jitter_xy(np.asarray(field.center, dtype=float), rng, tuning.geometry_jitter_m * 0.4)
+                tuned.append(replace(field, center=center, strength=float(field.strength * effective_scale)))
             else:
                 tuned.append(field)
         return tuned
@@ -184,6 +231,7 @@ class ScenarioGenerator:
 
     def head_on(self) -> EncounterScenario:
         tuning = self.config.scenario_generation.head_on
+        rng = self._scenario_rng("head_on", tuning)
         own = VesselAgent(
             name="Own Ship",
             initial_state=ShipState(x=0.0, y=-180.0, heading=0.0, speed=6.4),
@@ -217,16 +265,19 @@ class ScenarioGenerator:
         ]
         metadata = ScenarioMetadata(
             category="nearshore_head_on",
+            family=tuning.family_name if tuning.family_name != "default" else "head_on",
+            difficulty=self.config.experiment.difficulty_label,
+            layout_seed=None if tuning.scenario_seed is None else int(tuning.scenario_seed) + self._stable_seed("head_on"),
             description="对遇场景叠加狭水道边界与轻微潮流，强调迎面避碰与航道约束。",
             recommended_view="corridor",
             colreg_roles={"Target A": "head_on"},
             tags=("head_on", "channel", "nearshore"),
         )
-        own = self._tuned_agent(own, tuning, apply_goal_offset=True)
-        targets = [self._tuned_agent(target, tuning, apply_goal_offset=False, target=True) for target in self._limit_items(targets, tuning.target_limit)]
-        obstacles = [self._tuned_polygon_obstacle(obstacle, tuning) for obstacle in obstacles]
-        scalar_fields = self._scale_scalar_fields(scalar_fields, tuning.scalar_amplitude_scale)
-        vector_fields = self._scale_vector_fields(vector_fields, tuning.vector_speed_scale)
+        own = self._tuned_agent(own, tuning, apply_goal_offset=True, rng=rng)
+        targets = [self._tuned_agent(target, tuning, apply_goal_offset=False, target=True, rng=rng) for target in self._limit_items(targets, tuning.target_limit)]
+        obstacles = [self._tuned_polygon_obstacle(obstacle, tuning, rng=rng) for obstacle in obstacles]
+        scalar_fields = self._scale_scalar_fields(scalar_fields, tuning.scalar_amplitude_scale, rng=rng, tuning=tuning)
+        vector_fields = self._scale_vector_fields(vector_fields, tuning.vector_speed_scale, rng=rng, tuning=tuning)
         return EncounterScenario(
             name="Head-on",
             own_ship=own,
@@ -240,6 +291,7 @@ class ScenarioGenerator:
 
     def crossing(self) -> EncounterScenario:
         tuning = self.config.scenario_generation.crossing
+        rng = self._scenario_rng("crossing", tuning)
         own = VesselAgent(
             name="Own Ship",
             initial_state=ShipState(x=0.0, y=-480.0, heading=0.03, speed=6.2),
@@ -292,22 +344,25 @@ class ScenarioGenerator:
         ]
         metadata = ScenarioMetadata(
             category="nearshore_crossing",
+            family=tuning.family_name if tuning.family_name != "default" else "crossing",
+            difficulty=self.config.experiment.difficulty_label,
+            layout_seed=None if tuning.scenario_seed is None else int(tuning.scenario_seed) + self._stable_seed("crossing"),
             description="交叉会遇叠加小岛、禁航区和局部风险场，是最有代表性的多目标折中场景。",
             recommended_view="overview",
             colreg_roles={"Target A": "crossing_give_way", "Target B": "crossing_stand_on"},
             tags=("crossing", "island", "risk_field", "multi_ship"),
         )
-        own = self._tuned_agent(own, tuning, apply_goal_offset=True)
-        targets = [self._tuned_agent(target, tuning, apply_goal_offset=False, target=True) for target in self._limit_items(targets, tuning.target_limit)]
+        own = self._tuned_agent(own, tuning, apply_goal_offset=True, rng=rng)
+        targets = [self._tuned_agent(target, tuning, apply_goal_offset=False, target=True, rng=rng) for target in self._limit_items(targets, tuning.target_limit)]
         tuned_obstacles = []
         for obstacle in obstacles:
             if isinstance(obstacle, CircularObstacle):
-                tuned_obstacles.append(self._tuned_circular_obstacle(obstacle, tuning))
+                tuned_obstacles.append(self._tuned_circular_obstacle(obstacle, tuning, rng=rng))
             else:
-                tuned_obstacles.append(self._tuned_polygon_obstacle(obstacle, tuning))
+                tuned_obstacles.append(self._tuned_polygon_obstacle(obstacle, tuning, rng=rng))
         obstacles = tuned_obstacles
-        scalar_fields = self._scale_scalar_fields(scalar_fields, tuning.scalar_amplitude_scale)
-        vector_fields = self._scale_vector_fields(vector_fields, tuning.vector_speed_scale)
+        scalar_fields = self._scale_scalar_fields(scalar_fields, tuning.scalar_amplitude_scale, rng=rng, tuning=tuning)
+        vector_fields = self._scale_vector_fields(vector_fields, tuning.vector_speed_scale, rng=rng, tuning=tuning)
         return EncounterScenario(
             name="Crossing",
             own_ship=own,
@@ -321,6 +376,7 @@ class ScenarioGenerator:
 
     def overtaking(self) -> EncounterScenario:
         tuning = self.config.scenario_generation.overtaking
+        rng = self._scenario_rng("overtaking", tuning)
         own = VesselAgent(
             name="Own Ship",
             initial_state=ShipState(x=0.0, y=-120.0, heading=0.0, speed=7.1),
@@ -360,16 +416,19 @@ class ScenarioGenerator:
         ]
         metadata = ScenarioMetadata(
             category="nearshore_overtaking",
+            family=tuning.family_name if tuning.family_name != "default" else "overtaking",
+            difficulty=self.config.experiment.difficulty_label,
+            layout_seed=None if tuning.scenario_seed is None else int(tuning.scenario_seed) + self._stable_seed("overtaking"),
             description="追越场景叠加狭水道边界和尾流风险区，用于展示效率与安全间的再平衡。",
             recommended_view="corridor",
             colreg_roles={"Target A": "overtaking", "Target B": "crossing_give_way"},
             tags=("overtaking", "channel", "multi_ship"),
         )
-        own = self._tuned_agent(own, tuning, apply_goal_offset=True)
-        targets = [self._tuned_agent(target, tuning, apply_goal_offset=False, target=True) for target in self._limit_items(targets, tuning.target_limit)]
-        obstacles = [self._tuned_polygon_obstacle(obstacle, tuning) for obstacle in obstacles]
-        scalar_fields = self._scale_scalar_fields(scalar_fields, tuning.scalar_amplitude_scale)
-        vector_fields = self._scale_vector_fields(vector_fields, tuning.vector_speed_scale)
+        own = self._tuned_agent(own, tuning, apply_goal_offset=True, rng=rng)
+        targets = [self._tuned_agent(target, tuning, apply_goal_offset=False, target=True, rng=rng) for target in self._limit_items(targets, tuning.target_limit)]
+        obstacles = [self._tuned_polygon_obstacle(obstacle, tuning, rng=rng) for obstacle in obstacles]
+        scalar_fields = self._scale_scalar_fields(scalar_fields, tuning.scalar_amplitude_scale, rng=rng, tuning=tuning)
+        vector_fields = self._scale_vector_fields(vector_fields, tuning.vector_speed_scale, rng=rng, tuning=tuning)
         return EncounterScenario(
             name="Overtaking",
             own_ship=own,
@@ -383,6 +442,7 @@ class ScenarioGenerator:
 
     def harbor_clutter(self) -> EncounterScenario:
         tuning: HarborClutterTuningConfig = self.config.scenario_generation.harbor_clutter
+        rng = self._scenario_rng("harbor_clutter", tuning)
         own = VesselAgent(
             name="Own Ship",
             initial_state=ShipState(x=150.0, y=-1450.0, heading=0.08, speed=5.9),
@@ -482,6 +542,9 @@ class ScenarioGenerator:
         ]
         metadata = ScenarioMetadata(
             category="restricted_harbor_transit",
+            family=tuning.family_name,
+            difficulty=self.config.experiment.difficulty_label,
+            layout_seed=None if tuning.scenario_seed is None else int(tuning.scenario_seed) + self._stable_seed("harbor_clutter"),
             description="高密障碍受限海域穿越场景，包含窄通道、码头禁入区、岛礁样障碍和多目标船会遇。",
             recommended_view="dense_harbor",
             colreg_roles={
@@ -491,20 +554,20 @@ class ScenarioGenerator:
             },
             tags=("harbor", "dense_obstacles", "restricted_waters", "multi_ship", "risk_field"),
         )
-        own = self._tuned_agent(own, tuning, apply_goal_offset=True)
-        targets = [self._tuned_agent(target, tuning, apply_goal_offset=False, target=True) for target in self._limit_items(targets, tuning.target_limit)]
+        own = self._tuned_agent(own, tuning, apply_goal_offset=True, rng=rng)
+        targets = [self._tuned_agent(target, tuning, apply_goal_offset=False, target=True, rng=rng) for target in self._limit_items(targets, tuning.target_limit)]
         boundary_obstacles = [
-            self._tuned_polygon_obstacle(obstacle, tuning, scale=1.0, y_scale=tuning.channel_width_scale)
+            self._tuned_polygon_obstacle(obstacle, tuning, scale=1.0, y_scale=tuning.channel_width_scale, rng=rng)
             for obstacle in obstacles
             if isinstance(obstacle, ChannelBoundary)
         ]
         circular_obstacles = [
-            self._tuned_circular_obstacle(obstacle, tuning)
+            self._tuned_circular_obstacle(obstacle, tuning, rng=rng)
             for obstacle in obstacles
             if isinstance(obstacle, CircularObstacle)
         ]
         polygon_obstacles = [
-            self._tuned_polygon_obstacle(obstacle, tuning)
+            self._tuned_polygon_obstacle(obstacle, tuning, rng=rng)
             for obstacle in obstacles
             if isinstance(obstacle, KeepOutZone)
         ]
@@ -513,8 +576,8 @@ class ScenarioGenerator:
             + self._limit_items(circular_obstacles, tuning.circular_obstacle_limit)
             + self._limit_items(polygon_obstacles, tuning.polygon_obstacle_limit)
         )
-        scalar_fields = self._scale_scalar_fields(scalar_fields, tuning.scalar_amplitude_scale)
-        vector_fields = self._scale_vector_fields(vector_fields, tuning.vector_speed_scale)
+        scalar_fields = self._scale_scalar_fields(scalar_fields, tuning.scalar_amplitude_scale, rng=rng, tuning=tuning)
+        vector_fields = self._scale_vector_fields(vector_fields, tuning.vector_speed_scale, rng=rng, tuning=tuning)
         return EncounterScenario(
             name="Harbor Clutter",
             own_ship=own,

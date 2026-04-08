@@ -93,9 +93,11 @@ ship 主线当前默认语义是：
 - 偏现实场景
 - 静态障碍 + 动态交通体 + 环境场
 - 滚动重规划 episode
+- 同一个 episode 内复用同一个 KEMM session
 - 3 主目标优化
 - 额外输出分析指标
 - 核心论文图包默认开启
+- 轨迹类图默认展示 representative run，统计表保留 repeated-run aggregates
 
 关键公共接口：
 
@@ -126,6 +128,9 @@ benchmark 主线已经把图表层与算法层隔离：
 3. 绘图参数优先集中在 `reporting_config.py`
 4. 根目录 legacy 文件继续保持薄兼容
 5. 新图和新逻辑不要灌回兼容层
+6. ship 侧真实 KEMM 机制开关优先走 `DemoConfig.kemm.runtime`，不要只改包装层预算字段
+7. ship 报告算法顺序和集合优先走 `DemoConfig.report_algorithms`
+8. 如果动 ship 场景生成逻辑，同步保证 `scenario_catalog.json` 还能记录 family / seed / difficulty
 
 ---
 

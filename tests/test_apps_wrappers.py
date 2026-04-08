@@ -121,6 +121,51 @@ class AppWrapperTests(unittest.TestCase):
         )
         self.assertFalse(RunnerExperimentConfig.ABLATION_BENCHMARK_PRIOR)
 
+    def test_experiment_config_instances_do_not_share_mutable_state(self):
+        cfg_a = RunnerExperimentConfig()
+        cfg_b = RunnerExperimentConfig()
+
+        cfg_a.PROBLEMS.append("CustomProblem")
+        cfg_a.SETTINGS.append((99, 99))
+        cfg_a.KEMM_CONFIG.enable_memory = False
+
+        self.assertNotIn("CustomProblem", cfg_b.PROBLEMS)
+        self.assertNotIn((99, 99), cfg_b.SETTINGS)
+        self.assertTrue(cfg_b.KEMM_CONFIG.enable_memory)
+
+    def test_benchmark_runner_restores_global_numpy_random_state_between_runs(self):
+        class TinySeedConfig:
+            POP_SIZE = 8
+            N_VAR = 2
+            N_OBJ = 2
+            NT = 10
+            TAU_T = 10
+            SETTINGS = [(10, 10)]
+            CANONICAL_SETTING = (10, 10)
+            N_CHANGES = 1
+            GENS_PER_CHANGE = 1
+            N_RUNS = 1
+            PROBLEMS = ["FDA1"]
+            ALGORITHMS = {"RI": RI_DMOEA}
+            KEMM_CONFIG = KEMMConfig(benchmark_aware_prior=False, memory_online_epochs=1)
+
+        class DummyProblems:
+            @staticmethod
+            def get_problem(_name):
+                return lambda pop, t: np.zeros((len(np.atleast_2d(pop)), 2), dtype=float), lambda t=0.0: np.zeros((1, 2), dtype=float)
+
+        runner = ExperimentRunner(TinySeedConfig())
+        runner._run_single = lambda *args, **kwargs: {"migd": 0.0, "sp": 0.0, "ms": 0.0, "time": 0.0, "igd_curve": [], "hv_curve": [], "change_diagnostics": []}
+
+        np.random.seed(12345)
+        expected = np.random.rand(5)
+        np.random.seed(12345)
+        runner.problems = DummyProblems()
+        runner._run_setting_sweep({"RI": RI_DMOEA}, progress_prefix="TST", collect_curves=False, collect_diagnostics=False)
+        actual = np.random.rand(5)
+
+        np.testing.assert_allclose(actual, expected)
+
     def test_run_ablation_all_disables_benchmark_prior_by_default(self):
         class TinyAblationConfig:
             POP_SIZE = 8

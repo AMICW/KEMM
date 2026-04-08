@@ -70,6 +70,9 @@ class ScenarioMetadata:
     """场景元信息。"""
 
     category: str = "nearshore_encounter"
+    family: str = "default"
+    difficulty: str = "baseline"
+    layout_seed: int | None = None
     description: str = ""
     recommended_view: str = "overview"
     colreg_roles: dict[str, str] = field(default_factory=dict)

@@ -63,6 +63,13 @@ class GlobalFigureSpec:
     renderer_name: str
 
 
+@dataclass(frozen=True)
+class AlgorithmReportSpec:
+    key: str
+    label: str
+    color_attr: str
+
+
 @dataclass
 class ScenarioFigureContext:
     scenario_key: str
@@ -76,6 +83,7 @@ class ScenarioFigureContext:
 class GlobalFigureContext:
     scenario_map: Mapping[str, object]
     aggregate_payload: Mapping[str, Mapping[str, Sequence[PlanningEpisodeResult]]]
+    algorithm_specs: Sequence[AlgorithmReportSpec]
 
 
 def _build_quick_demo_config() -> DemoConfig:
@@ -93,18 +101,46 @@ def _build_quick_demo_config() -> DemoConfig:
     return demo
 
 
-def _weighted_score(objectives: np.ndarray) -> float:
-    weights = np.array([0.4, 0.25, 0.35], dtype=float)
-    return float(np.dot(objectives, weights))
+def _normalized_weights(weights: Sequence[float]) -> np.ndarray:
+    arr = np.asarray(weights, dtype=float)
+    total = float(np.sum(arr))
+    if total <= 1e-12:
+        return np.full(len(arr), 1.0 / max(len(arr), 1), dtype=float)
+    return arr / total
+
+
+def _weighted_score(objectives: np.ndarray, weights: Sequence[float]) -> float:
+    return float(np.dot(objectives, _normalized_weights(weights)))
 
 
 def _optimizer_display_name(name: str) -> str:
-    mapping = {
-        "kemm": "KEMM",
-        "nsga_style": "NSGA-style",
-        "random": "Random",
-    }
-    return mapping.get(name, name)
+    return next((spec.label for spec in DEFAULT_ALGORITHM_SPECS if spec.key == name), name)
+
+
+DEFAULT_ALGORITHM_SPECS: tuple[AlgorithmReportSpec, ...] = (
+    AlgorithmReportSpec("kemm", "KEMM", "own_ship_color"),
+    AlgorithmReportSpec("nsga_style", "NSGA-style", "third_algo_color"),
+    AlgorithmReportSpec("random", "Random", "baseline_color"),
+)
+
+
+def _resolve_algorithm_specs(demo_config: DemoConfig) -> list[AlgorithmReportSpec]:
+    registry = {spec.key: spec for spec in DEFAULT_ALGORITHM_SPECS}
+    specs: list[AlgorithmReportSpec] = []
+    for key in demo_config.report_algorithms:
+        spec = registry.get(key)
+        if spec is None:
+            spec = AlgorithmReportSpec(key=key, label=key, color_attr="baseline_color")
+        specs.append(spec)
+    return specs
+
+
+def _algorithm_color(spec: AlgorithmReportSpec, plot_config: ShipPlotConfig, index: int) -> str:
+    color = getattr(plot_config, spec.color_attr, None)
+    if color is not None:
+        return str(color)
+    fallback = [plot_config.own_ship_color, plot_config.third_algo_color, plot_config.baseline_color]
+    return str(fallback[index % len(fallback)])
 
 
 def _episode_row(scenario_key: str, optimizer_name: str, run_index: int, episode: PlanningEpisodeResult) -> dict[str, object]:
@@ -195,7 +231,7 @@ def _aggregate_rows(rows: List[dict[str, object]]) -> list[dict[str, object]]:
     return aggregates
 
 
-def _representative_episode(episodes: Iterable[PlanningEpisodeResult]) -> PlanningEpisodeResult:
+def _representative_episode_index(episodes: Iterable[PlanningEpisodeResult], objective_weights: Sequence[float]) -> int:
     episode_list = list(episodes)
     if not episode_list:
         raise ValueError("At least one episode is required.")
@@ -205,7 +241,7 @@ def _representative_episode(episodes: Iterable[PlanningEpisodeResult]) -> Planni
     objective_matrix = np.asarray([episode.final_evaluation.objectives for episode in candidates], dtype=float)
     center = np.median(objective_matrix, axis=0)
     span = np.ptp(objective_matrix, axis=0)
-    weighted_scores = np.asarray([_weighted_score(episode.final_evaluation.objectives) for episode in candidates], dtype=float)
+    weighted_scores = np.asarray([_weighted_score(episode.final_evaluation.objectives, objective_weights) for episode in candidates], dtype=float)
     target_score = float(np.median(weighted_scores))
 
     def ranking_key(index: int) -> tuple[float, float, float]:
@@ -214,7 +250,13 @@ def _representative_episode(episodes: Iterable[PlanningEpisodeResult]) -> Planni
         runtime = float(candidates[index].analysis_metrics.get("runtime", 0.0))
         return normalized_distance, weighted_gap, runtime
 
-    return candidates[min(range(len(candidates)), key=ranking_key)]
+    chosen = min(range(len(candidates)), key=ranking_key)
+    return episode_list.index(candidates[chosen])
+
+
+def _representative_episode(episodes: Iterable[PlanningEpisodeResult], objective_weights: Sequence[float]) -> PlanningEpisodeResult:
+    episode_list = list(episodes)
+    return episode_list[_representative_episode_index(episode_list, objective_weights)]
 
 
 def _repeated_statistics(episodes: Iterable[PlanningEpisodeResult]) -> dict[str, float]:
@@ -268,6 +310,8 @@ def _write_markdown(output_path: Path, aggregates: list[dict[str, object]]) -> N
     output_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Ship Simulation Report",
+        "",
+        "> Tables below aggregate all repeated runs. Trajectory-like figures use representative runs recorded in `raw/representative_runs.json`.",
         "",
         "| Scenario | Optimizer | Fuel | Time | Risk | Clearance | Ship Dist | Runtime | Knee (F/T/R) | Success Rate |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
@@ -396,7 +440,19 @@ def _render_radar(context: ScenarioFigureContext, output_path: Path, plot_config
 
 
 def _render_convergence(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
-    save_convergence_statistics(output_path, context.scenario.name, context.histories_by_label, plot_config=plot_config)
+    objective_weights = {
+        series.label: getattr(series.problem_config, "objective_weights", (1.0, 1.0, 1.0))
+        for series in context.best_series
+    }
+    series_colors = {series.label: series.color for series in context.best_series}
+    save_convergence_statistics(
+        output_path,
+        context.scenario.name,
+        context.histories_by_label,
+        objective_weights=objective_weights,
+        series_colors=series_colors,
+        plot_config=plot_config,
+    )
 
 
 def _render_distribution(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
@@ -423,7 +479,17 @@ def _render_scenario_gallery(context: GlobalFigureContext, output_path: Path, pl
 
 
 def _render_route_bundle_gallery(context: GlobalFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
-    save_route_bundle_gallery(output_path, context.scenario_map, context.aggregate_payload, plot_config=plot_config)
+    algorithm_styles = [
+        (spec.key, spec.label, _algorithm_color(spec, plot_config, index))
+        for index, spec in enumerate(context.algorithm_specs)
+    ]
+    save_route_bundle_gallery(
+        output_path,
+        context.scenario_map,
+        context.aggregate_payload,
+        algorithm_styles=algorithm_styles,
+        plot_config=plot_config,
+    )
 
 
 SCENARIO_FIGURE_SPECS = (
@@ -476,6 +542,7 @@ def generate_report_with_config(
     plot_config = plot_config or build_ship_plot_config(demo_config.plot_preset, appendix_plots=demo_config.appendix_plots)
     scenario_keys = scenario_keys or ["head_on", "crossing", "overtaking", "harbor_clutter"]
     generator = ScenarioGenerator(config)
+    algorithm_specs = _resolve_algorithm_specs(demo_config)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     root = output_root or Path("ship_simulation/outputs") / f"report_{timestamp}"
     raw_dir = root / "raw"
@@ -485,11 +552,12 @@ def generate_report_with_config(
     figures_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    algorithms = ["kemm", "nsga_style", "random"]
+    algorithms = [spec.key for spec in algorithm_specs]
     run_count = int(n_runs or demo_config.n_runs)
     scenario_rows: list[dict[str, object]] = []
     aggregate_payload: dict[str, dict[str, list[PlanningEpisodeResult]]] = defaultdict(dict)
     step_payload: dict[str, dict[str, list[dict[str, object]]]] = defaultdict(dict)
+    representative_payload: dict[str, dict[str, dict[str, object]]] = defaultdict(dict)
     scenario_map: dict[str, object] = {}
     t0 = time.time()
 
@@ -499,7 +567,7 @@ def generate_report_with_config(
         print(f"Output directory: {root}", flush=True)
         print(f"Scenarios: {', '.join(scenario_keys)}", flush=True)
         print(f"Experiment profile: {config.experiment.profile_name}", flush=True)
-        print(f"Algorithms: {', '.join(algorithms)} | Runs per algorithm: {run_count}", flush=True)
+        print(f"Algorithms: {', '.join(spec.label for spec in algorithm_specs)} | Runs per algorithm: {run_count}", flush=True)
 
     for scenario_index, scenario_key in enumerate(scenario_keys, start=1):
         scenario = generator.generate(scenario_key)
@@ -558,32 +626,32 @@ def generate_report_with_config(
                     print(f"  - {_optimizer_display_name(algorithm):>10s} run {run_index + 1}/{run_count}: fuel={episode.final_evaluation.objectives[0]:.2f}, time={episode.final_evaluation.objectives[1]:.2f}, risk={episode.final_evaluation.objectives[2]:.3f}", flush=True)
             aggregate_payload[scenario_key][algorithm] = episodes
 
-        best_series = [
-            ExperimentSeries(
-                label="KEMM",
-                episode=_representative_episode(aggregate_payload[scenario_key]["kemm"]),
-                color=plot_config.own_ship_color,
-                histories=[episode.convergence_history for episode in aggregate_payload[scenario_key]["kemm"]],
-                distribution_metrics=[episode.analysis_metrics for episode in aggregate_payload[scenario_key]["kemm"]],
-                repeated_statistics=_repeated_statistics(aggregate_payload[scenario_key]["kemm"]),
-            ),
-            ExperimentSeries(
-                label="NSGA-style",
-                episode=_representative_episode(aggregate_payload[scenario_key]["nsga_style"]),
-                color=plot_config.third_algo_color,
-                histories=[episode.convergence_history for episode in aggregate_payload[scenario_key]["nsga_style"]],
-                distribution_metrics=[episode.analysis_metrics for episode in aggregate_payload[scenario_key]["nsga_style"]],
-                repeated_statistics=_repeated_statistics(aggregate_payload[scenario_key]["nsga_style"]),
-            ),
-            ExperimentSeries(
-                label="Random",
-                episode=_representative_episode(aggregate_payload[scenario_key]["random"]),
-                color=plot_config.baseline_color,
-                histories=[episode.convergence_history for episode in aggregate_payload[scenario_key]["random"]],
-                distribution_metrics=[episode.analysis_metrics for episode in aggregate_payload[scenario_key]["random"]],
-                repeated_statistics=_repeated_statistics(aggregate_payload[scenario_key]["random"]),
-            ),
-        ]
+        best_series: list[ExperimentSeries] = []
+        for algo_index, spec in enumerate(algorithm_specs):
+            episodes = list(aggregate_payload[scenario_key].get(spec.key, []))
+            if not episodes:
+                continue
+            representative_index = _representative_episode_index(episodes, config.objective_weights)
+            representative = episodes[representative_index]
+            representative_payload[scenario_key][spec.key] = {
+                "label": spec.label,
+                "run_index": int(representative_index),
+                "selection_method": "median-objective-medoid",
+                "reached_goal": bool(representative.final_evaluation.reached_goal),
+                "objectives": representative.final_evaluation.objectives.tolist(),
+                "success_rate": float(np.mean([1.0 if episode.final_evaluation.reached_goal else 0.0 for episode in episodes])),
+            }
+            best_series.append(
+                ExperimentSeries(
+                    label=spec.label,
+                    episode=representative,
+                    color=_algorithm_color(spec, plot_config, algo_index),
+                    histories=[episode.convergence_history for episode in episodes],
+                    distribution_metrics=[episode.analysis_metrics for episode in episodes],
+                    repeated_statistics=_repeated_statistics(episodes),
+                    problem_config=config,
+                )
+            )
         histories_by_label = {series.label: series.histories for series in best_series}
         metrics_by_label = {series.label: series.distribution_metrics for series in best_series}
         scenario_context = ScenarioFigureContext(
@@ -599,7 +667,11 @@ def generate_report_with_config(
             renderer(scenario_context, output_path, plot_config)
 
     aggregates = _aggregate_rows(scenario_rows)
-    global_context = GlobalFigureContext(scenario_map=scenario_map, aggregate_payload=aggregate_payload)
+    global_context = GlobalFigureContext(
+        scenario_map=scenario_map,
+        aggregate_payload=aggregate_payload,
+        algorithm_specs=algorithm_specs,
+    )
     for spec in GLOBAL_FIGURE_SPECS:
         output_path = figures_dir / spec.file_name
         renderer = globals()[spec.renderer_name]
@@ -608,6 +680,7 @@ def generate_report_with_config(
     _write_csv(raw_dir / "aggregate_summary.csv", aggregates)
     _write_json(raw_dir / "summary.json", {"runs": scenario_rows, "aggregates": aggregates})
     _write_json(raw_dir / "planning_steps.json", step_payload)
+    _write_json(raw_dir / "representative_runs.json", representative_payload)
     _write_json(raw_dir / "figure_manifest.json", _figure_manifest(list(scenario_keys)))
     _write_json(
         raw_dir / "scenario_catalog.json",
@@ -620,7 +693,7 @@ def generate_report_with_config(
         raw_dir / "report_metadata.json",
         {
             "scenario_keys": list(scenario_keys),
-            "algorithms": algorithms,
+            "algorithms": [{"key": spec.key, "label": spec.label} for spec in algorithm_specs],
             "n_runs": run_count,
             "plot_preset": demo_config.plot_preset,
             "experiment_profile": config.experiment.profile_name,
@@ -637,31 +710,21 @@ def generate_report_with_config(
 
     # 附录图只保留旧柱状对比图，不再作为默认主图。
     if plot_config.appendix_plots:
+        aggregate_lookup = {(row["scenario_key"], row["optimizer"]): row for row in aggregates}
+        comparison_pair = None
+        if "kemm" in algorithms and "random" in algorithms:
+            comparison_pair = ("KEMM", "Random")
         scenario_names = scenario_keys
-        kemm_objectives = np.asarray([
-            _representative_episode(aggregate_payload[key]["kemm"]).final_evaluation.objectives for key in scenario_keys
-        ], dtype=float)
-        random_objectives = np.asarray([
-            _representative_episode(aggregate_payload[key]["random"]).final_evaluation.objectives for key in scenario_keys
-        ], dtype=float)
-        kemm_risks = np.asarray([
-            [
-                _representative_episode(aggregate_payload[key]["kemm"]).final_evaluation.risk.max_risk,
-                _representative_episode(aggregate_payload[key]["kemm"]).final_evaluation.risk.mean_risk,
-                _representative_episode(aggregate_payload[key]["kemm"]).final_evaluation.risk.intrusion_time,
-            ]
-            for key in scenario_keys
-        ], dtype=float)
-        random_risks = np.asarray([
-            [
-                _representative_episode(aggregate_payload[key]["random"]).final_evaluation.risk.max_risk,
-                _representative_episode(aggregate_payload[key]["random"]).final_evaluation.risk.mean_risk,
-                _representative_episode(aggregate_payload[key]["random"]).final_evaluation.risk.intrusion_time,
-            ]
-            for key in scenario_keys
-        ], dtype=float)
-        save_normalized_objective_bars(figures_dir / "appendix_objective_bars.png", scenario_names, kemm_objectives, random_objectives, plot_config=plot_config)
-        save_risk_bars(figures_dir / "appendix_risk_bars.png", scenario_names, kemm_risks, random_risks, plot_config=plot_config)
+        if comparison_pair is not None:
+            left_label, right_label = comparison_pair
+            left_rows = [aggregate_lookup[(key, left_label)] for key in scenario_keys]
+            right_rows = [aggregate_lookup[(key, right_label)] for key in scenario_keys]
+            left_objectives = np.asarray([[row["fuel_mean"], row["time_mean"], row["risk_mean"]] for row in left_rows], dtype=float)
+            right_objectives = np.asarray([[row["fuel_mean"], row["time_mean"], row["risk_mean"]] for row in right_rows], dtype=float)
+            left_risks = np.asarray([[row["max_risk_mean"], row["mean_risk_mean"], row["intrusion_time_mean"]] for row in left_rows], dtype=float)
+            right_risks = np.asarray([[row["max_risk_mean"], row["mean_risk_mean"], row["intrusion_time_mean"]] for row in right_rows], dtype=float)
+            save_normalized_objective_bars(figures_dir / "appendix_objective_bars.png", scenario_names, left_objectives, right_objectives, plot_config=plot_config)
+            save_risk_bars(figures_dir / "appendix_risk_bars.png", scenario_names, left_risks, right_risks, plot_config=plot_config)
 
     if verbose:
         print(f"Finished in {time.time() - t0:.1f}s. Report directory: {root}", flush=True)

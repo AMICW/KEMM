@@ -34,12 +34,18 @@ def random_search(interface: ShipOptimizerInterface, n_samples: int = 80, seed: 
     return samples, objectives
 
 
-def select_demo_solution(decisions: np.ndarray, objectives: np.ndarray) -> np.ndarray:
+def select_demo_solution(
+    decisions: np.ndarray,
+    objectives: np.ndarray,
+    objective_weights: tuple[float, float, float] = (1.0, 1.0, 1.0),
+) -> np.ndarray:
     """从候选解里选一个折中解。"""
 
     spread = np.ptp(objectives, axis=0)
     normalized = (objectives - objectives.min(axis=0)) / (spread + 1e-9)
-    scores = 0.4 * normalized[:, 0] + 0.25 * normalized[:, 1] + 0.35 * normalized[:, 2]
+    weights = np.asarray(objective_weights, dtype=float)
+    weights = weights / max(float(np.sum(weights)), 1e-9)
+    scores = normalized @ weights
     return decisions[int(np.argmin(scores))]
 
 

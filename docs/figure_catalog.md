@@ -247,6 +247,11 @@
 - 审稿风险：应明确每种颜色对应的算法以及轨迹带包含多少次重复运行
 - 建议：主图
 
+补充说明：
+
+- 这张图属于 aggregate 叙事，优先和 `aggregate_summary.csv` 一起使用
+- 与之对应，单场景的 `route_planning_panel / spatiotemporal / snapshots` 属于 representative-run 叙事
+
 ---
 
 ### 4.1 `*_environment_overlay.png`
@@ -259,7 +264,7 @@
 - 推荐章节：案例分析 / 物理仿真结果
 - 推荐图注模板：图 X 给出了近海会遇场景下的环境场叠加轨迹图，其中背景热图表示环境暴露或风险势场，箭头表示流场方向与强度，阴影区域表示静态障碍或禁航区。
 - 推荐正文写法：环境叠加图表明，KEMM 生成的轨迹在避开高代价区域的同时保持了合理的整体推进效率。
-- 审稿风险：需要明确热图具体对应的物理量
+- 审稿风险：需要明确热图具体对应的物理量；如果正文同时配 repeated-run 表格，需说明这是一条 representative 轨迹
 - 建议：主图
 
 ### 4.2 `*_change_timeline.png`

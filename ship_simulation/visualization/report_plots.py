@@ -42,6 +42,7 @@ class ExperimentSeries:
     histories: list[list[dict[str, float]]] = field(default_factory=list)
     distribution_metrics: list[dict[str, float]] = field(default_factory=list)
     repeated_statistics: dict[str, float] = field(default_factory=dict)
+    problem_config: object | None = None
 
     def __post_init__(self) -> None:
         if self.result is None and self.episode is not None:
@@ -53,6 +54,8 @@ class ExperimentSeries:
                 self.pareto_decisions = self.episode.pareto_decisions
             if not self.snapshots:
                 self.snapshots = list(self.episode.snapshots)
+            if self.problem_config is None:
+                self.problem_config = getattr(self.episode, "problem_config", None)
         if self.result is None:
             raise ValueError("ExperimentSeries requires either `episode` or `result`.")
 
@@ -74,6 +77,18 @@ def _plotly_color(color: str) -> str:
         return str(to_hex(color))
     except ValueError:
         return color
+
+
+def _normalized_weights(weights: Sequence[float] | None, n_obj: int = 3) -> np.ndarray:
+    if weights is None:
+        return np.full(n_obj, 1.0 / max(n_obj, 1), dtype=float)
+    arr = np.asarray(weights, dtype=float)
+    if arr.size != n_obj:
+        arr = np.resize(arr, n_obj)
+    total = float(np.sum(arr))
+    if total <= 1e-12:
+        return np.full(n_obj, 1.0 / max(n_obj, 1), dtype=float)
+    return arr / total
 
 
 def _finalize_figure(fig, output_path: Path, cfg: ShipPlotConfig, *, allow_interactive: bool = False) -> None:
@@ -115,6 +130,7 @@ def _styled_plot(func):
 def _apply_plotly_scene_layout(
     fig,
     *,
+    cfg: ShipPlotConfig,
     title: str,
     xaxis_title: str,
     yaxis_title: str,
@@ -129,7 +145,7 @@ def _apply_plotly_scene_layout(
             y=0.98,
             xanchor="left",
             x=0.02,
-            bgcolor="rgba(255,255,255,0.82)",
+            bgcolor=cfg.plotly_legend_bgcolor,
         ),
         scene=dict(
             xaxis_title=xaxis_title,
@@ -139,6 +155,28 @@ def _apply_plotly_scene_layout(
             camera=dict(eye=dict(x=1.45, y=1.35, z=0.92)),
         ),
     )
+
+
+def _legend_kwargs(cfg: ShipPlotConfig, **overrides) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "frameon": True,
+        "fancybox": False,
+        "framealpha": cfg.legend_alpha,
+        "facecolor": cfg.legend_facecolor,
+        "edgecolor": cfg.legend_edgecolor,
+        "borderpad": 0.35,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _card_bbox(cfg: ShipPlotConfig, *, alpha: float | None = None, edgecolor: str | None = None) -> dict[str, object]:
+    return {
+        "boxstyle": "round,pad=0.28",
+        "facecolor": cfg.card_facecolor,
+        "alpha": cfg.card_alpha if alpha is None else alpha,
+        "edgecolor": cfg.card_edgecolor if edgecolor is None else edgecolor,
+    }
 
 
 def _obstacle_style(obstacle, cfg: ShipPlotConfig) -> dict[str, object]:
@@ -156,12 +194,12 @@ def _obstacle_style(obstacle, cfg: ShipPlotConfig) -> dict[str, object]:
     }
 
 
-def _draw_start_goal(ax, scenario: EncounterScenario) -> None:
+def _draw_start_goal(ax, scenario: EncounterScenario, cfg: ShipPlotConfig) -> None:
     start = scenario.own_ship.initial_state.position()
     goal = np.asarray(scenario.own_ship.goal, dtype=float) if scenario.own_ship.goal is not None else None
-    ax.scatter(start[0], start[1], marker="o", color="#1d4ed8", s=48, zorder=6)
+    ax.scatter(start[0], start[1], marker="o", color=cfg.start_marker_color, s=48, zorder=6)
     if goal is not None:
-        ax.scatter(goal[0], goal[1], marker="o", color="#16a34a", s=48, zorder=6)
+        ax.scatter(goal[0], goal[1], marker="o", color=cfg.goal_marker_color, s=48, zorder=6)
 
 
 def _draw_traffic_initials(ax, scenario: EncounterScenario, cfg: ShipPlotConfig) -> None:
@@ -180,19 +218,19 @@ def _draw_traffic_initials(ax, scenario: EncounterScenario, cfg: ShipPlotConfig)
         )
 
 
-def _scenario_legend_handles(scenario: EncounterScenario) -> list[object]:
+def _scenario_legend_handles(scenario: EncounterScenario, cfg: ShipPlotConfig) -> list[object]:
     handles: list[object] = [
-        Line2D([0], [0], marker="o", color="none", markerfacecolor="#1d4ed8", markersize=6, label="Start"),
-        Line2D([0], [0], marker="o", color="none", markerfacecolor="#16a34a", markersize=6, label="Goal"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=cfg.start_marker_color, markersize=6, label="Start"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=cfg.goal_marker_color, markersize=6, label="Goal"),
     ]
     if any(isinstance(obstacle, CircularObstacle) for obstacle in scenario.static_obstacles):
-        handles.append(Patch(facecolor="#111827", edgecolor="#111827", alpha=0.9, label="Circular obstacle"))
+        handles.append(Patch(facecolor=cfg.circular_obstacle_legend_color, edgecolor=cfg.circular_obstacle_legend_color, alpha=0.9, label="Circular obstacle"))
     if any(isinstance(obstacle, PolygonObstacle) and getattr(obstacle, "kind", "") == "keep_out" for obstacle in scenario.static_obstacles):
-        handles.append(Patch(facecolor="#86efac", edgecolor="#475569", alpha=0.9, label="Keep-out polygon"))
+        handles.append(Patch(facecolor=cfg.keep_out_legend_color, edgecolor=cfg.obstacle_edgecolor, alpha=0.9, label="Keep-out polygon"))
     if any(isinstance(obstacle, PolygonObstacle) and getattr(obstacle, "kind", "") == "channel_boundary" for obstacle in scenario.static_obstacles):
-        handles.append(Patch(facecolor="#d1d5db", edgecolor="#475569", alpha=0.7, label="Channel boundary"))
+        handles.append(Patch(facecolor=cfg.channel_boundary_legend_color, edgecolor=cfg.obstacle_edgecolor, alpha=0.7, label="Channel boundary"))
     if scenario.target_ships:
-        handles.append(Line2D([0], [0], marker="o", color="#dc2626", markerfacecolor="#dc2626", markersize=6, label="Traffic ship"))
+        handles.append(Line2D([0], [0], marker="o", color=cfg.traffic_marker_color, markerfacecolor=cfg.traffic_marker_color, markersize=6, label="Traffic ship"))
     return handles
 
 
@@ -205,6 +243,34 @@ def _series_legend_handles(series_list: Sequence[ExperimentSeries]) -> list[obje
 
 def _panel_caption(index: int, title: str) -> str:
     return f"({chr(ord('a') + index)}) {title}"
+
+
+def _gallery_grid(count: int, *, max_cols: int = 2) -> tuple[int, int]:
+    if count <= 1:
+        return 1, 1
+    if count == 2:
+        return 1, min(max_cols, 2)
+    ncols = min(max_cols, 2)
+    nrows = int(np.ceil(count / ncols))
+    return nrows, ncols
+
+
+def _gallery_figsize(count: int, base_figsize: tuple[float, float], *, max_cols: int = 2) -> tuple[float, float]:
+    nrows, ncols = _gallery_grid(count, max_cols=max_cols)
+    cell_width = base_figsize[0] / 2.0
+    cell_height = base_figsize[1] / 2.0
+    width = cell_width * ncols + 0.35
+    height = cell_height * nrows + 1.05
+    if count == 1:
+        width = max(width, cell_width * 1.12)
+        height = max(height, cell_height * 1.18 + 0.85)
+    return width, height
+
+
+def _gallery_panel_title(index: int, title: str, total: int) -> str:
+    if total <= 1:
+        return title
+    return _panel_caption(index, title)
 
 
 def _add_obstacles(ax, scenario: EncounterScenario, cfg: ShipPlotConfig) -> None:
@@ -242,11 +308,17 @@ def _plot_scalar_vector_background(ax, scenario: EncounterScenario, series: Expe
     from ship_simulation.optimizer.problem import ShipTrajectoryProblem
     from ship_simulation.config import build_default_config
 
-    problem = ShipTrajectoryProblem(scenario, build_default_config())
+    problem_config = series.problem_config if series.problem_config is not None else build_default_config()
+    problem = ShipTrajectoryProblem(scenario, problem_config)
     xx, yy, zz = problem.environment.sample_scalar_grid(scenario.area, resolution=cfg.scalar_grid_resolution)
-    ax.contourf(xx, yy, zz, levels=16, cmap=cfg.scalar_cmap, alpha=0.42)
+    floor = float(np.quantile(zz, cfg.scalar_field_floor_quantile))
+    ceiling = float(np.max(zz))
+    if ceiling > floor:
+        levels = np.linspace(floor, ceiling, cfg.scalar_field_levels)
+        masked = np.ma.masked_less(zz, floor)
+        ax.contourf(xx, yy, masked, levels=levels, cmap=cfg.scalar_cmap, alpha=cfg.scalar_field_alpha, antialiased=True)
     vx, vy, uu, vv = problem.environment.sample_vector_grid(scenario.area, resolution=cfg.vector_grid_resolution)
-    ax.quiver(vx, vy, uu, vv, color=cfg.vector_color, alpha=0.45, width=0.002)
+    ax.quiver(vx, vy, uu, vv, color=cfg.vector_color, alpha=cfg.vector_field_alpha, width=0.002)
 
 
 def _draw_ship_trajectories(
@@ -297,22 +369,74 @@ def _draw_ship_trajectories(
         ax.scatter(scenario.own_ship.goal[0], scenario.own_ship.goal[1], marker="*", color="gold", s=180, label="Goal")
 
 
+def _scenario_focus_bounds(
+    scenario: EncounterScenario,
+    *,
+    extra_points: np.ndarray | None = None,
+) -> tuple[float, float, float, float]:
+    xmin, xmax, ymin, ymax = scenario.area
+    x_points: list[float] = [float(scenario.own_ship.initial_state.x)]
+    y_points: list[float] = [float(scenario.own_ship.initial_state.y)]
+    if scenario.own_ship.goal is not None:
+        x_points.append(float(scenario.own_ship.goal[0]))
+        y_points.append(float(scenario.own_ship.goal[1]))
+    for target in scenario.target_ships:
+        x_points.append(float(target.initial_state.x))
+        y_points.append(float(target.initial_state.y))
+    for obstacle in scenario.static_obstacles:
+        if isinstance(obstacle, CircularObstacle):
+            x_points.extend([float(obstacle.center[0] - obstacle.radius), float(obstacle.center[0] + obstacle.radius)])
+            y_points.extend([float(obstacle.center[1] - obstacle.radius), float(obstacle.center[1] + obstacle.radius)])
+        else:
+            vertices = np.asarray(obstacle.vertices, dtype=float)
+            x_points.extend(vertices[:, 0].tolist())
+            y_points.extend(vertices[:, 1].tolist())
+    if extra_points is not None and extra_points.size:
+        x_points.extend(np.asarray(extra_points[:, 0], dtype=float).tolist())
+        y_points.extend(np.asarray(extra_points[:, 1], dtype=float).tolist())
+    if not x_points or not y_points:
+        return xmin, xmax, ymin, ymax
+    data_xmin = min(x_points)
+    data_xmax = max(x_points)
+    data_ymin = min(y_points)
+    data_ymax = max(y_points)
+    span_x = max(data_xmax - data_xmin, 1.0)
+    span_y = max(data_ymax - data_ymin, 1.0)
+    pad_x = max(span_x * 0.12, 180.0)
+    pad_y = max(span_y * 0.12, 180.0)
+    return (
+        max(xmin, data_xmin - pad_x),
+        min(xmax, data_xmax + pad_x),
+        max(ymin, data_ymin - pad_y),
+        min(ymax, data_ymax + pad_y),
+    )
+
+
 def _format_spatial_axis(ax, scenario: EncounterScenario, title: str, cfg: ShipPlotConfig) -> None:
     xmin, xmax, ymin, ymax = scenario.area
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
     ax.set_aspect("equal", adjustable="box")
+    ax.set_facecolor(cfg.panel_facecolor)
     ax.set_title(title)
     ax.set_xlabel("X [m]")
     ax.set_ylabel("Y [m]")
     ax.grid(True, alpha=cfg.style.grid_alpha)
 
 
-def _format_gallery_axis(ax, scenario: EncounterScenario, title: str, cfg: ShipPlotConfig) -> None:
-    xmin, xmax, ymin, ymax = scenario.area
+def _format_gallery_axis(
+    ax,
+    scenario: EncounterScenario,
+    title: str,
+    cfg: ShipPlotConfig,
+    *,
+    extra_points: np.ndarray | None = None,
+) -> None:
+    xmin, xmax, ymin, ymax = _scenario_focus_bounds(scenario, extra_points=extra_points)
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
     ax.set_aspect("equal", adjustable="box")
+    ax.set_facecolor(cfg.panel_facecolor)
     ax.set_title(title, pad=6)
     ax.set_xticks([])
     ax.set_yticks([])
@@ -408,7 +532,7 @@ def _annotate_change_events(ax, episode: PlanningEpisodeResult, cfg: ShipPlotCon
                 ha="left",
                 color=cfg.event_line_color,
                 fontsize=max(cfg.style.tick_size - 1, 8),
-                bbox=dict(boxstyle="round,pad=0.18", facecolor="white", alpha=0.82, edgecolor=cfg.event_fill_color),
+                bbox=_card_bbox(cfg, alpha=0.82, edgecolor=cfg.event_fill_color),
             )
 
 
@@ -417,7 +541,11 @@ def _plotly_pareto_hover_payload(episode: PlanningEpisodeResult) -> tuple[np.nda
     decisions = np.asarray(episode.pareto_decisions, dtype=float) if episode.pareto_decisions is not None else np.zeros((len(objectives), 0), dtype=float)
     if objectives.size == 0:
         return np.zeros((0, 0), dtype=float), ""
-    weighted = 0.4 * objectives[:, 0] + 0.25 * objectives[:, 1] + 0.35 * objectives[:, 2]
+    weights = _normalized_weights(
+        getattr(getattr(episode, "problem_config", None), "objective_weights", None),
+        n_obj=objectives.shape[1],
+    )
+    weighted = objectives @ weights
     speed_mean = np.zeros(len(objectives), dtype=float)
     waypoint_xy = np.full((len(objectives), 2), np.nan, dtype=float)
     if decisions.ndim == 2 and decisions.shape[1] >= 3:
@@ -589,6 +717,7 @@ def _save_spatiotemporal_html(output_path: Path, scenario: EncounterScenario, ep
         )
     _apply_plotly_scene_layout(
         fig,
+        cfg=cfg,
         title=f"{scenario.name}: spatiotemporal planning",
         xaxis_title="X [m]",
         yaxis_title="Y [m]",
@@ -610,7 +739,7 @@ def _save_pareto_html(output_path: Path, scenario_name: str, episode: PlanningEp
         colorscale=cfg.pareto_cmap,
         opacity=0.85,
         colorbar=dict(title="Objective-space radius"),
-        line=dict(width=0.8, color="#334155"),
+        line=dict(width=0.8, color=_plotly_color(cfg.vector_color)),
     )
     fig = go.Figure(
         data=[
@@ -643,6 +772,7 @@ def _save_pareto_html(output_path: Path, scenario_name: str, episode: PlanningEp
         )
     _apply_plotly_scene_layout(
         fig,
+        cfg=cfg,
         title=f"{scenario_name}: 3D Pareto front",
         xaxis_title="Fuel",
         yaxis_title="Time",
@@ -669,10 +799,10 @@ def save_environment_overlay(
     _plot_scalar_vector_background(ax, scenario, series_list[0], cfg)
     _add_obstacles(ax, scenario, cfg)
     _draw_ship_trajectories(ax, scenario, series_list, cfg, show_velocity_arrows=False)
-    _draw_start_goal(ax, scenario)
+    _draw_start_goal(ax, scenario, cfg)
     _format_spatial_axis(ax, scenario, f"{scenario.name}: trajectory overview on environment field", cfg)
-    legend_handles = _series_legend_handles(series_list) + _scenario_legend_handles(scenario)
-    ax.legend(handles=legend_handles, loc="upper left", ncol=2, frameon=True, fancybox=False)
+    legend_handles = _series_legend_handles(series_list) + _scenario_legend_handles(scenario, cfg)
+    ax.legend(handles=legend_handles, loc="upper left", ncol=2, **_legend_kwargs(cfg))
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)
 
@@ -695,11 +825,11 @@ def save_route_planning_panel(
     _plot_scalar_vector_background(ax, scenario, series_list[0], cfg)
     _add_obstacles(ax, scenario, cfg)
     _draw_ship_trajectories(ax, scenario, series_list, cfg, show_velocity_arrows=True)
-    _draw_start_goal(ax, scenario)
+    _draw_start_goal(ax, scenario, cfg)
     _format_spatial_axis(ax, scenario, f"{scenario.name}: constrained-water route planning", cfg)
     _draw_route_insets(fig, ax, scenario, series_list, cfg)
-    legend_handles = _series_legend_handles(series_list) + _scenario_legend_handles(scenario)
-    ax.legend(handles=legend_handles, loc="upper left", ncol=2, frameon=True, fancybox=False)
+    legend_handles = _series_legend_handles(series_list) + _scenario_legend_handles(scenario, cfg)
+    ax.legend(handles=legend_handles, loc="upper left", ncol=2, **_legend_kwargs(cfg))
     reference_episode = next((series.episode for series in series_list if series.episode is not None), None)
     profile_name = reference_episode.experiment_profile if reference_episode is not None else "baseline"
     ax.text(
@@ -710,7 +840,7 @@ def save_route_planning_panel(
         ha="right",
         va="bottom",
         fontsize=max(cfg.style.tick_size - 1, 8),
-        bbox=dict(boxstyle="round,pad=0.24", facecolor="white", alpha=0.9, edgecolor="#cbd5e1"),
+        bbox=_card_bbox(cfg, alpha=0.9),
     )
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)
@@ -729,15 +859,14 @@ def save_scenario_gallery(
     items = list(scenario_map.items())
     if not items:
         return
-    ncols = 2
-    nrows = int(np.ceil(len(items) / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=cfg.scenario_gallery_figsize)
+    nrows, ncols = _gallery_grid(len(items))
+    fig, axes = plt.subplots(nrows, ncols, figsize=_gallery_figsize(len(items), cfg.scenario_gallery_figsize), squeeze=False)
     axes = np.atleast_1d(axes).ravel()
     for index, ((scenario_key, scenario), ax) in enumerate(zip(items, axes)):
         _add_obstacles(ax, scenario, cfg)
-        _draw_start_goal(ax, scenario)
+        _draw_start_goal(ax, scenario, cfg)
         _draw_traffic_initials(ax, scenario, cfg)
-        _format_gallery_axis(ax, scenario, _panel_caption(index, scenario.name), cfg)
+        _format_gallery_axis(ax, scenario, _gallery_panel_title(index, scenario.name, len(items)), cfg)
         ax.text(
             0.02,
             0.02,
@@ -746,15 +875,15 @@ def save_scenario_gallery(
             ha="left",
             va="bottom",
             fontsize=max(cfg.style.tick_size - 1, 8),
-            bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.88, edgecolor="#cbd5e1"),
+            bbox=_card_bbox(cfg, alpha=0.88),
         )
     for ax in axes[len(items) :]:
         ax.set_visible(False)
-    handles = _scenario_legend_handles(items[0][1])
+    handles = _scenario_legend_handles(items[0][1], cfg)
     if handles:
-        fig.legend(handles=handles, loc="upper center", ncol=min(len(handles), 5), frameon=False, bbox_to_anchor=(0.5, 1.02))
-    fig.suptitle("Generated ship-encounter environments")
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
+        fig.legend(handles=handles, loc="upper center", ncol=min(len(handles), 5), bbox_to_anchor=(0.5, 0.985), **_legend_kwargs(cfg))
+    fig.suptitle("Generated ship-encounter environments", y=0.94 if len(items) == 1 else 0.955)
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.88 if len(items) == 1 else 0.90))
     _finalize_figure(fig, output_path, cfg)
 
 
@@ -763,6 +892,7 @@ def save_route_bundle_gallery(
     output_path: Path,
     scenario_map: Mapping[str, EncounterScenario],
     episode_groups: Mapping[str, Mapping[str, Sequence[PlanningEpisodeResult]]],
+    algorithm_styles: Sequence[tuple[str, str, str]] | None = None,
     plot_config: ShipPlotConfig | None = None,
 ) -> None:
     """多场景最终轨迹带图，展示跨重复运行的路线带与代表路径。"""
@@ -772,23 +902,24 @@ def save_route_bundle_gallery(
     items = list(scenario_map.items())
     if not items:
         return
-    algo_styles = [
+    algo_styles = list(algorithm_styles) if algorithm_styles is not None else [
         ("kemm", "KEMM bundle", cfg.own_ship_color),
         ("nsga_style", "NSGA-style bundle", cfg.baseline_color),
     ]
-    ncols = 2
-    nrows = int(np.ceil(len(items) / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=cfg.route_bundle_figsize)
+    nrows, ncols = _gallery_grid(len(items))
+    fig, axes = plt.subplots(nrows, ncols, figsize=_gallery_figsize(len(items), cfg.route_bundle_figsize), squeeze=False)
     axes = np.atleast_1d(axes).ravel()
     for index, ((scenario_key, scenario), ax) in enumerate(zip(items, axes)):
         _add_obstacles(ax, scenario, cfg)
-        _draw_start_goal(ax, scenario)
+        _draw_start_goal(ax, scenario, cfg)
         _draw_traffic_initials(ax, scenario, cfg)
+        route_points: list[np.ndarray] = []
         groups = episode_groups.get(scenario_key, {})
         for algo_key, _, color in algo_styles:
             episodes = list(groups.get(algo_key, []))
             for episode in episodes:
                 positions = episode.final_evaluation.own_trajectory.positions
+                route_points.append(np.asarray(positions, dtype=float))
                 ax.plot(
                     positions[:, 0],
                     positions[:, 1],
@@ -797,9 +928,13 @@ def save_route_bundle_gallery(
                     alpha=cfg.route_bundle_alpha,
                 )
             if episodes:
+                representative_weights = _normalized_weights(
+                    getattr(getattr(episodes[0], "problem_config", None), "objective_weights", None),
+                    n_obj=episodes[0].final_evaluation.objectives.shape[0],
+                )
                 representative = min(
                     episodes,
-                    key=lambda ep: float(np.dot(ep.final_evaluation.objectives, np.array([0.4, 0.25, 0.35], dtype=float))),
+                    key=lambda ep: float(np.dot(ep.final_evaluation.objectives, representative_weights)),
                 )
                 positions = representative.final_evaluation.own_trajectory.positions
                 ax.plot(
@@ -809,16 +944,23 @@ def save_route_bundle_gallery(
                     linewidth=cfg.style.emphasis_line_width,
                     alpha=cfg.representative_route_alpha,
                 )
-        _format_gallery_axis(ax, scenario, _panel_caption(index, f"{scenario.name} route bundles"), cfg)
+        focus_points = np.vstack(route_points) if route_points else None
+        _format_gallery_axis(
+            ax,
+            scenario,
+            _gallery_panel_title(index, f"{scenario.name} route bundles", len(items)),
+            cfg,
+            extra_points=focus_points,
+        )
     for ax in axes[len(items) :]:
         ax.set_visible(False)
-    legend_handles = _scenario_legend_handles(items[0][1]) + [
-        Line2D([0], [0], color=cfg.own_ship_color, lw=2.8, label="KEMM bundle"),
-        Line2D([0], [0], color=cfg.baseline_color, lw=2.8, label="NSGA-style bundle"),
+    legend_handles = _scenario_legend_handles(items[0][1], cfg) + [
+        Line2D([0], [0], color=color, lw=2.8, label=label)
+        for _, label, color in algo_styles
     ]
-    fig.legend(handles=legend_handles, loc="upper center", ncol=min(len(legend_handles), 6), frameon=False, bbox_to_anchor=(0.5, 1.02))
-    fig.suptitle("Final route bundles across repeated ship simulations")
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
+    fig.legend(handles=legend_handles, loc="upper center", ncol=min(len(legend_handles), 6), bbox_to_anchor=(0.5, 0.985), **_legend_kwargs(cfg))
+    fig.suptitle("Final route bundles across repeated ship simulations", y=0.94 if len(items) == 1 else 0.955)
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.88 if len(items) == 1 else 0.90))
     _finalize_figure(fig, output_path, cfg)
 
 
@@ -854,7 +996,7 @@ def save_dynamic_avoidance_snapshots(
             target_pos = snapshot.target_positions[target_idx]
             ax.plot(traj.positions[:, 0], traj.positions[:, 1], linestyle="--", color=target.color, alpha=0.25)
             ax.scatter(target_pos[0], target_pos[1], marker="s", color=target.color, s=90)
-            ax.plot([snapshot.own_position[0], target_pos[0]], [snapshot.own_position[1], target_pos[1]], linestyle=":", color="#111827", alpha=0.65)
+            ax.plot([snapshot.own_position[0], target_pos[0]], [snapshot.own_position[1], target_pos[1]], linestyle=":", color=cfg.circular_obstacle_legend_color, alpha=0.65)
         ax.set_title(f"t = {snapshot.time_s:.0f}s | risk = {snapshot.risk:.2f}")
         ax.set_aspect("equal", adjustable="box")
         ax.grid(True, alpha=cfg.style.grid_alpha)
@@ -900,7 +1042,7 @@ def save_spatiotemporal_plot(
     ax.set_xlabel("X [m]")
     ax.set_ylabel("Y [m]")
     ax.set_zlabel("Time [s]")
-    ax.legend(loc="best")
+    ax.legend(loc="best", **_legend_kwargs(cfg))
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg, allow_interactive=True)
     _save_spatiotemporal_html(output_path, scenario, episode, cfg)
@@ -921,13 +1063,13 @@ def save_control_time_series(
     fig, axes = plt.subplots(4, 1, figsize=cfg.control_figsize, sharex=True)
     axes[0].plot(traj.times, np.rad2deg(traj.headings), color=cfg.own_ship_color)
     axes[0].set_ylabel("Heading [deg]")
-    axes[1].plot(traj.times, np.rad2deg(traj.commanded_yaw_rates), color="#7c3aed")
-    axes[1].axhline(np.rad2deg(episode.result.analysis_metrics.get("max_commanded_yaw_rate", 0.0)), linestyle="--", color="#ef4444", alpha=0.6)
+    axes[1].plot(traj.times, np.rad2deg(traj.commanded_yaw_rates), color=cfg.command_color)
+    axes[1].axhline(np.rad2deg(episode.result.analysis_metrics.get("max_commanded_yaw_rate", 0.0)), linestyle="--", color=cfg.limit_line_color, alpha=0.6)
     axes[1].set_ylabel("Cmd yaw [deg/s]")
-    axes[2].plot(traj.times, np.rad2deg(traj.yaw_rates), color="#10b981")
-    axes[2].axhline(np.rad2deg(episode.result.analysis_metrics.get("max_yaw_rate", 0.0)), linestyle="--", color="#ef4444", alpha=0.6)
+    axes[2].plot(traj.times, np.rad2deg(traj.yaw_rates), color=cfg.yaw_rate_color)
+    axes[2].axhline(np.rad2deg(episode.result.analysis_metrics.get("max_yaw_rate", 0.0)), linestyle="--", color=cfg.limit_line_color, alpha=0.6)
     axes[2].set_ylabel("Yaw rate [deg/s]")
-    axes[3].plot(traj.times, traj.speeds, color="#f59e0b")
+    axes[3].plot(traj.times, traj.speeds, color=cfg.speed_color)
     axes[3].set_ylabel("Speed [m/s]")
     axes[3].set_xlabel("Time [s]")
     for ax in axes:
@@ -974,7 +1116,7 @@ def save_pareto_3d_with_knee(
     fig.colorbar(scatter, ax=ax, shrink=0.8, label="Objective-space radius")
     fig.tight_layout(rect=(0.0, 0.0, 0.95, 1.0))
     if episode.knee_index is not None:
-        ax.legend(loc="best")
+        ax.legend(loc="best", **_legend_kwargs(cfg))
         knee = objectives[episode.knee_index]
         x_span = max(np.ptp(objectives[:, 0]) * 0.22, 1e-6)
         y_span = max(np.ptp(objectives[:, 1]) * 0.22, 1e-6)
@@ -1022,7 +1164,7 @@ def save_pareto_projection_panel(
     for ax, (x_idx, y_idx, x_label, y_label) in zip(np.atleast_1d(axes), projections):
         points = objectives[:, [x_idx, y_idx]]
         front_order = _projection_front_order(points)
-        ax.scatter(points[:, 0], points[:, 1], color="#94a3b8", alpha=0.45, s=cfg.style.scatter_size * 0.9, label="Projected points")
+        ax.scatter(points[:, 0], points[:, 1], color=cfg.projected_point_color, alpha=0.45, s=cfg.style.scatter_size * 0.9, label="Projected points")
         if front_order.size:
             front = points[front_order]
             ax.plot(front[:, 0], front[:, 1], color=cfg.own_ship_color, linewidth=cfg.style.emphasis_line_width, label="Projected frontier")
@@ -1034,7 +1176,7 @@ def save_pareto_projection_panel(
         ax.grid(True, alpha=cfg.style.grid_alpha)
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 1.02))
+        fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 1.02), **_legend_kwargs(cfg))
     fig.suptitle(f"{scenario_name}: pairwise Pareto projections of final local front")
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)
@@ -1066,7 +1208,7 @@ def save_parallel_coordinates(
     ax.set_ylabel("Normalized score (higher is better)")
     ax.set_title(f"{scenario_name}: parallel coordinates")
     ax.grid(True, alpha=cfg.style.grid_alpha)
-    ax.legend(loc="best")
+    ax.legend(loc="best", **_legend_kwargs(cfg))
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)
 
@@ -1096,7 +1238,7 @@ def save_radar_chart(
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(metric_names)
     ax.set_title(f"{scenario_name}: radar comparison")
-    ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.1))
+    ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.1), **_legend_kwargs(cfg))
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)
 
@@ -1106,6 +1248,8 @@ def save_convergence_statistics(
     output_path: Path,
     scenario_name: str,
     histories_by_label: Mapping[str, Sequence[Sequence[dict[str, float]]]],
+    objective_weights: Mapping[str, Sequence[float]] | Sequence[float] | None = None,
+    series_colors: Mapping[str, str] | None = None,
     plot_config: ShipPlotConfig | None = None,
 ) -> None:
     _ensure_parent(output_path)
@@ -1114,13 +1258,25 @@ def save_convergence_statistics(
     for idx, (label, histories) in enumerate(histories_by_label.items()):
         if not histories:
             continue
+        if isinstance(objective_weights, Mapping):
+            fallback_weights = _normalized_weights(objective_weights.get(label), n_obj=3)
+        else:
+            fallback_weights = _normalized_weights(objective_weights, n_obj=3)
         curves = []
         for history in histories:
             curve = []
             for row in history:
                 score = row.get("best_weighted_score")
                 if score is None:
-                    score = row.get("best_fuel", 0.0) * 0.4 + row.get("best_time", 0.0) * 0.25 + row.get("best_risk", 0.0) * 0.35
+                    objective_triplet = np.array(
+                        [
+                            row.get("best_fuel", 0.0),
+                            row.get("best_time", 0.0),
+                            row.get("best_risk", 0.0),
+                        ],
+                        dtype=float,
+                    )
+                    score = float(np.dot(objective_triplet, fallback_weights))
                 curve.append(float(score))
             if curve:
                 curves.append(curve)
@@ -1131,14 +1287,16 @@ def save_convergence_statistics(
         mean_curve = np.mean(padded, axis=0)
         std_curve = np.std(padded, axis=0)
         x = np.arange(len(mean_curve))
-        color = [cfg.own_ship_color, cfg.baseline_color, cfg.third_algo_color][idx % 3]
+        color = series_colors.get(label) if series_colors is not None else None
+        if color is None:
+            color = [cfg.own_ship_color, cfg.baseline_color, cfg.third_algo_color][idx % 3]
         ax.plot(x, mean_curve, color=color, linewidth=cfg.style.line_width, label=label)
         ax.fill_between(x, mean_curve - std_curve, mean_curve + std_curve, color=color, alpha=cfg.style.band_alpha)
     ax.set_title(f"{scenario_name}: convergence with confidence bands")
     ax.set_xlabel("Generation")
     ax.set_ylabel("Best actual weighted score")
     ax.grid(True, alpha=cfg.style.grid_alpha)
-    ax.legend(loc="best")
+    ax.legend(loc="best", **_legend_kwargs(cfg))
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)
 
@@ -1190,14 +1348,14 @@ def save_risk_breakdown_time_series(
     axes[0].set_ylabel("Total risk")
     axes[0].set_title("Integrated collision-risk response")
     axes[0].grid(True, alpha=cfg.style.grid_alpha)
-    axes[0].legend(loc="best")
+    axes[0].legend(loc="best", **_legend_kwargs(cfg))
     _annotate_change_events(axes[0], episode, cfg, with_labels=True)
 
     components = [
-        ("Domain", risk.domain_risk_series, "#0f766e"),
-        ("DCPA/TCPA", risk.dcpa_risk_series, "#7c3aed"),
-        ("Obstacle", risk.obstacle_risk_series, "#dc2626"),
-        ("Environment", risk.environment_risk_series, "#f59e0b"),
+        ("Domain", risk.domain_risk_series, cfg.component_domain_color),
+        ("DCPA/TCPA", risk.dcpa_risk_series, cfg.component_dcpa_color),
+        ("Obstacle", risk.obstacle_risk_series, cfg.component_obstacle_color),
+        ("Environment", risk.environment_risk_series, cfg.component_environment_color),
     ]
     for label, values, color in components:
         axes[1].plot(times[: len(values)], values, color=color, linewidth=cfg.style.line_width, label=label)
@@ -1205,7 +1363,7 @@ def save_risk_breakdown_time_series(
     axes[1].set_xlabel("Time [s]")
     axes[1].set_ylabel("Component intensity")
     axes[1].grid(True, alpha=cfg.style.grid_alpha)
-    axes[1].legend(loc="best", ncol=2)
+    axes[1].legend(loc="best", ncol=2, **_legend_kwargs(cfg))
     _annotate_change_events(axes[1], episode, cfg)
     fig.suptitle(f"{scenario_name}: risk breakdown time series")
     fig.tight_layout()
@@ -1228,29 +1386,29 @@ def save_safety_envelope_plot(
     fig, axes = plt.subplots(2, 1, figsize=cfg.safety_envelope_figsize, sharex=True)
 
     axes[0].plot(times[: len(risk.clearance_series)], risk.clearance_series, color=cfg.own_ship_color, label="Overall clearance")
-    axes[0].plot(times[: len(risk.static_clearance_series)], risk.static_clearance_series, color="#7c3aed", linestyle="--", label="Static clearance")
-    axes[0].plot(times[: len(risk.ship_distance_series)], risk.ship_distance_series, color="#16a34a", label="Ship distance")
-    axes[0].axhline(0.0, color="#991b1b", linestyle=":", alpha=0.75)
+    axes[0].plot(times[: len(risk.static_clearance_series)], risk.static_clearance_series, color=cfg.static_clearance_color, linestyle="--", label="Static clearance")
+    axes[0].plot(times[: len(risk.ship_distance_series)], risk.ship_distance_series, color=cfg.ship_distance_color, label="Ship distance")
+    axes[0].axhline(0.0, color=cfg.zero_line_color, linestyle=":", alpha=0.75)
     axes[0].set_ylabel("Distance [m]")
     axes[0].set_title("Clearance and encounter separation")
     axes[0].grid(True, alpha=cfg.style.grid_alpha)
-    axes[0].legend(loc="best")
+    axes[0].legend(loc="best", **_legend_kwargs(cfg))
     _annotate_change_events(axes[0], episode, cfg, with_labels=True)
 
     dcpa = np.where(np.isfinite(risk.dcpa_series), risk.dcpa_series, np.nan)
     tcpa = np.where(np.isfinite(risk.tcpa_series), risk.tcpa_series, np.nan)
-    axes[1].plot(times[: len(dcpa)], dcpa, color="#0f766e", label="DCPA")
-    axes[1].plot(times[: len(tcpa)], tcpa, color="#f97316", label="TCPA")
+    axes[1].plot(times[: len(dcpa)], dcpa, color=cfg.dcpa_color, label="DCPA")
+    axes[1].plot(times[: len(tcpa)], tcpa, color=cfg.tcpa_color, label="TCPA")
     axes[1].set_xlabel("Time [s]")
     axes[1].set_ylabel("CPA metric")
     axes[1].set_title("Encounter envelope with COLREG scaling")
     axes[1].grid(True, alpha=cfg.style.grid_alpha)
     twin = axes[1].twinx()
-    twin.plot(times[: len(risk.colreg_scale_series)], risk.colreg_scale_series, color="#b42318", linestyle="--", label="COLREG scale")
+    twin.plot(times[: len(risk.colreg_scale_series)], risk.colreg_scale_series, color=cfg.risk_threshold_color, linestyle="--", label="COLREG scale")
     twin.set_ylabel("COLREG scale")
     handles, labels = axes[1].get_legend_handles_labels()
     twin_handles, twin_labels = twin.get_legend_handles_labels()
-    axes[1].legend(handles + twin_handles, labels + twin_labels, loc="best")
+    axes[1].legend(handles + twin_handles, labels + twin_labels, loc="best", **_legend_kwargs(cfg))
     _annotate_change_events(axes[1], episode, cfg)
     fig.suptitle(f"{scenario_name}: safety envelope")
     fig.tight_layout()
@@ -1272,38 +1430,42 @@ def save_change_timeline_panel(
     if not steps:
         return
     step_index = np.arange(len(steps), dtype=float)
+    weights = _normalized_weights(
+        getattr(getattr(episode, "problem_config", None), "objective_weights", None),
+        n_obj=3,
+    )
     weighted = np.asarray(
         [
-            0.4 * float(step.selected_evaluation.objectives[0])
-            + 0.25 * float(step.selected_evaluation.objectives[1])
-            + 0.35 * float(step.selected_evaluation.objectives[2])
+            float(np.dot(step.selected_evaluation.objectives, weights))
             for step in steps
         ],
         dtype=float,
     )
     risk = np.asarray([float(step.selected_evaluation.risk.max_risk) for step in steps], dtype=float)
     runtime = np.asarray([float(step.runtime_s) for step in steps], dtype=float)
+    event_count = 0
     labels = ["None"] * len(steps)
     for step in steps:
         if step.applied_changes:
             labels[step.step_index] = " + ".join(str(change.get("label", "Change")) for change in step.applied_changes)
+            event_count += 1
 
     fig, axes = plt.subplots(3, 1, figsize=cfg.change_timeline_figsize, sharex=True)
     axes[0].plot(step_index, weighted, color=cfg.own_ship_color, marker="o")
     axes[0].set_ylabel("Weighted objective")
-    axes[0].set_title("Local-front quality across replanning steps")
+    axes[0].set_title("Local-front quality")
     axes[0].grid(True, alpha=cfg.style.grid_alpha)
 
-    axes[1].plot(step_index, risk, color="#dc2626", marker="o")
+    axes[1].plot(step_index, risk, color=cfg.component_obstacle_color, marker="o")
     axes[1].axhline(cfg.risk_threshold, linestyle="--", color=cfg.risk_threshold_color, alpha=0.7)
     axes[1].set_ylabel("Max risk")
-    axes[1].set_title("Risk response after scheduled changes")
+    axes[1].set_title("Risk response and safety threshold")
     axes[1].grid(True, alpha=cfg.style.grid_alpha)
 
-    bars = axes[2].bar(step_index, runtime, color="#64748b", alpha=0.88)
+    bars = axes[2].bar(step_index, runtime, color=cfg.runtime_bar_color, alpha=0.88)
     axes[2].set_ylabel("Runtime [s]")
     axes[2].set_xlabel("Planning step")
-    axes[2].set_title("Solver burden and applied scenario events")
+    axes[2].set_title("Solver runtime" if event_count == 0 else "Solver runtime and applied events")
     axes[2].grid(True, axis="y", alpha=cfg.style.grid_alpha)
     axes[2].set_xticks(step_index)
     axes[2].set_xticklabels([str(int(idx)) for idx in step_index])
@@ -1324,8 +1486,9 @@ def save_change_timeline_panel(
             fontsize=max(cfg.style.tick_size - 1, 8),
         )
         bars[int(idx)].set_color(cfg.event_line_color)
-    fig.suptitle(f"{scenario_name}: replanning change timeline")
-    fig.tight_layout()
+    subtitle = "baseline replanning timeline" if event_count == 0 else f"replanning timeline with {event_count} scheduled changes"
+    fig.suptitle(f"{scenario_name}: {subtitle}", y=0.985)
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.965))
     _finalize_figure(fig, output_path, cfg)
 
 
@@ -1390,15 +1553,21 @@ def save_summary_dashboard(
     if not series_list:
         return
     fig = plt.figure(figsize=cfg.dashboard_figsize)
-    grid = GridSpec(2, 2, figure=fig)
-    ax_overlay = fig.add_subplot(grid[0, 0])
-    ax_radar = fig.add_subplot(grid[0, 1], polar=True)
-    ax_conv = fig.add_subplot(grid[1, 0])
-    ax_text = fig.add_subplot(grid[1, 1])
+    grid = GridSpec(
+        2,
+        3,
+        figure=fig,
+        width_ratios=cfg.dashboard_width_ratios,
+        height_ratios=cfg.dashboard_height_ratios,
+    )
+    ax_overlay = fig.add_subplot(grid[0, :2])
+    ax_radar = fig.add_subplot(grid[0, 2], polar=True)
+    ax_conv = fig.add_subplot(grid[1, :2])
+    ax_text = fig.add_subplot(grid[1, 2])
 
     _plot_scalar_vector_background(ax_overlay, scenario, series_list[0], cfg)
     _add_obstacles(ax_overlay, scenario, cfg)
-    _draw_start_goal(ax_overlay, scenario)
+    _draw_start_goal(ax_overlay, scenario, cfg)
     for target_idx, target in enumerate(scenario.target_ships):
         traj = series_list[0].result.target_trajectories[target_idx]
         ax_overlay.plot(traj.positions[:, 0], traj.positions[:, 1], linestyle="--", linewidth=cfg.target_width, color=target.color)
@@ -1408,7 +1577,8 @@ def save_summary_dashboard(
     ax_overlay.set_title("Environment + Trajectory")
     ax_overlay.set_aspect("equal", adjustable="box")
     ax_overlay.grid(True, alpha=cfg.style.grid_alpha)
-    ax_overlay.legend(loc="best")
+    ax_overlay.set_facecolor(cfg.panel_facecolor)
+    ax_overlay.legend(loc="best", **_legend_kwargs(cfg))
 
     metric_names, values = _select_metrics(series_list)
     normalized = _normalized(values, minimize_mask=[True, True, True, False, True, True])
@@ -1421,8 +1591,12 @@ def save_summary_dashboard(
     ax_radar.set_xticks(angles[:-1])
     ax_radar.set_xticklabels(metric_names)
     ax_radar.set_title("Radar Comparison")
+    ax_radar.set_ylim(0.0, 1.0)
+    ax_radar.set_rlabel_position(22)
+    ax_radar.grid(alpha=cfg.style.grid_alpha)
 
     if histories_by_label:
+        color_map = {series.label: series.color for series in series_list}
         for idx, (label, histories) in enumerate(histories_by_label.items()):
             curves = []
             for history in histories:
@@ -1436,7 +1610,7 @@ def save_summary_dashboard(
             mean_curve = np.mean(padded, axis=0)
             std_curve = np.std(padded, axis=0)
             x = np.arange(len(mean_curve))
-            color = [cfg.own_ship_color, cfg.baseline_color, cfg.third_algo_color][idx % 3]
+            color = color_map.get(label, [cfg.own_ship_color, cfg.baseline_color, cfg.third_algo_color][idx % 3])
             ax_conv.plot(x, mean_curve, color=color, label=label)
             ax_conv.fill_between(x, mean_curve - std_curve, mean_curve + std_curve, color=color, alpha=cfg.style.band_alpha)
     ax_conv.set_title("Risk-Convergence")
@@ -1445,17 +1619,20 @@ def save_summary_dashboard(
     ax_conv.grid(True, alpha=cfg.style.grid_alpha)
     handles, labels = ax_conv.get_legend_handles_labels()
     if handles:
-        ax_conv.legend(loc="best")
+        ax_conv.legend(loc="best", **_legend_kwargs(cfg))
 
     ax_text.axis("off")
     representative_episode = series_list[0].episode
     if representative_episode is not None:
+        final_obj = representative_episode.final_evaluation.objectives
+        knee_obj = representative_episode.knee_objectives
         lines = [
             f"Scenario: {scenario.name}",
             f"Representative episode: {representative_episode.optimizer_name}",
-            f"Final local knee point: {representative_episode.knee_objectives.tolist() if representative_episode.knee_objectives is not None else 'N/A'}",
-            f"Fuel / Time / Risk: {representative_episode.final_evaluation.objectives.round(3).tolist()}",
-            f"Overall / static clearance: {representative_episode.analysis_metrics.get('minimum_clearance', 0.0):.2f} / {representative_episode.analysis_metrics.get('minimum_static_clearance', 0.0):.2f} m",
+            f"Repeated-run success rate: {series_list[0].repeated_statistics.get('success_rate', 0.0):.2%}",
+            f"Final local knee: [{knee_obj[0]:.1f}, {knee_obj[1]:.1f}, {knee_obj[2]:.3f}]" if knee_obj is not None else "Final local knee: N/A",
+            f"Fuel / Time / Risk: [{final_obj[0]:.1f}, {final_obj[1]:.1f}, {final_obj[2]:.3f}]",
+            f"Overall / static clearance: {representative_episode.analysis_metrics.get('minimum_clearance', 0.0):.1f} / {representative_episode.analysis_metrics.get('minimum_static_clearance', 0.0):.1f} m",
             f"Min ship distance: {representative_episode.analysis_metrics.get('minimum_ship_distance', 0.0):.2f} m",
             f"Min DCPA / TCPA: {representative_episode.analysis_metrics.get('minimum_dcpa', 0.0):.2f} / {representative_episode.analysis_metrics.get('minimum_tcpa', 0.0):.2f}",
             f"Planning steps: {len(representative_episode.steps)}",
@@ -1471,10 +1648,20 @@ def save_summary_dashboard(
             f"Terminal distance: {result.terminal_distance:.2f} m",
             f"Max / Mean risk: {result.risk.max_risk:.2f} / {result.risk.mean_risk:.2f}",
         ]
-    ax_text.text(0.02, 0.98, "\n".join(lines), va="top", ha="left")
+    ax_text.set_title("Representative episode", pad=10)
+    ax_text.text(
+        0.02,
+        0.98,
+        "\n".join(lines),
+        va="top",
+        ha="left",
+        fontsize=max(cfg.style.tick_size, 9),
+        family="monospace",
+        bbox=_card_bbox(cfg),
+    )
 
-    fig.suptitle(f"{scenario.name}: summary dashboard")
-    fig.tight_layout()
+    fig.suptitle(f"{scenario.name}: summary dashboard", y=0.985)
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.965))
     _finalize_figure(fig, output_path, cfg)
 
 
@@ -1517,7 +1704,7 @@ def save_pareto_scatter(output_path: Path, scenario_name: str, pareto_objectives
     ax.set_ylabel("Time")
     ax.set_zlabel("Risk")
     fig.colorbar(scatter, ax=ax, shrink=0.8, label="Objective-space radius")
-    ax.legend(loc="best")
+    ax.legend(loc="best", **_legend_kwargs(cfg))
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)
 
@@ -1537,7 +1724,7 @@ def save_risk_time_series(output_path: Path, scenario_name: str, series_list: It
     ax.set_xlabel("Time [s]")
     ax.set_ylabel("Risk")
     ax.grid(True, alpha=cfg.style.grid_alpha)
-    ax.legend(loc="best")
+    ax.legend(loc="best", **_legend_kwargs(cfg))
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)
 
@@ -1555,7 +1742,7 @@ def save_speed_profiles(output_path: Path, scenario_name: str, series_list: Iter
     ax.set_xlabel("Time [s]")
     ax.set_ylabel("Speed [m/s]")
     ax.grid(True, alpha=cfg.style.grid_alpha)
-    ax.legend(loc="best")
+    ax.legend(loc="best", **_legend_kwargs(cfg))
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)
 
@@ -1578,7 +1765,7 @@ def save_normalized_objective_bars(output_path: Path, scenario_names: Sequence[s
         ax.set_xticks(x)
         ax.set_xticklabels(scenario_names, rotation=10)
         ax.set_title(f"Normalized {metric_names[metric_idx]}")
-    axes[0].legend(loc="best")
+    axes[0].legend(loc="best", **_legend_kwargs(cfg))
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)
 
@@ -1597,6 +1784,6 @@ def save_risk_bars(output_path: Path, scenario_names: Sequence[str], kemm_risk_t
         ax.set_xticks(x)
         ax.set_xticklabels(scenario_names, rotation=10)
         ax.set_title(metric_names[metric_idx])
-    axes[0].legend(loc="best")
+    axes[0].legend(loc="best", **_legend_kwargs(cfg))
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)

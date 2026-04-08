@@ -80,7 +80,7 @@ ship_simulation/
 - `interface.py`
   对外暴露统一优化接口，保持 KEMM、随机基线、NSGA-style 基线复用同一问题层
 - `kemm_solver.py`
-  ship 侧 KEMM 适配器
+  ship 侧 KEMM 适配器；同一个 episode 内会复用同一个 KEMM 算法 session，而不是每个 replanning step 都重建
 - `baseline_solver.py`
   轻量 NSGA-II 风格基线
 - `episode.py`
@@ -109,6 +109,8 @@ ship_simulation/
 - `ShipPlotConfig`
 
 只要这些接口稳定，内部换风险项、换优化器、换画图实现时不会把入口层一起打碎。
+
+其中 `ShipPlotConfig` 现在也是 ship 图表的统一视觉主题入口。后续如果要整体换色板、换图例样式、减弱底图、调整 dashboard 比例，优先改 `reporting_config.py` 里的 `ShipPlotConfig` 字段，而不是回到 `report_plots.py` 里逐张图搜硬编码颜色。
 
 ---
 
@@ -169,6 +171,17 @@ ship_simulation/
 
 这使得场景难度可以通过配置对象直接重现实验，而不是把数值散落回 `generator.py`。
 
+如果你要把单一场景扩成“同一 family 下的可复现实验变体”，优先再看这些字段：
+
+- `family_name`
+- `scenario_seed`
+- `difficulty_scale`
+- `geometry_jitter_m`
+- `traffic_heading_jitter_deg`
+- `current_direction_jitter_deg`
+
+这组参数的设计目标不是做完全随机地图，而是在保留 `head_on / crossing / overtaking / harbor_clutter` 语义的前提下，生成同 family、可复现、可分层的几何与交通扰动变体。
+
 ### 4.5 动态实验 profile 入口
 
 如果你想让 ship 主线不只跑静态场景，而是在 rolling-horizon 过程中注入变化，优先改：
@@ -215,6 +228,36 @@ ship 主线现在默认走 episode，而不是一次性全局规划。
 3. 再比较终点推进程度
 4. 最后才比较多目标折中分数
 
+### 5.1 ship 侧 KEMM 配置入口
+
+如果你要改 ship 主线里的 KEMM，不要只改包装层预算，还要区分这两层：
+
+- `DemoConfig.kemm`
+- `DemoConfig.kemm.runtime`
+
+其中：
+
+- `DemoConfig.kemm.pop_size / generations / seed` 控制 ship 侧求解预算
+- `DemoConfig.kemm.use_change_response` 控制每次 replanning 时是否调用 KEMM 的环境响应流程
+- `DemoConfig.kemm.runtime` 透传给 `kemm.core.types.KEMMConfig`
+
+也就是说，真正的机制开关在：
+
+- `DemoConfig.kemm.runtime.enable_memory`
+- `DemoConfig.kemm.runtime.enable_prediction`
+- `DemoConfig.kemm.runtime.enable_transfer`
+- `DemoConfig.kemm.runtime.enable_adaptive`
+
+ship 侧会强制保持 `benchmark_aware_prior=False`，避免把 benchmark-only prior 混进物理场景主线。
+
+### 5.2 ship 报告算法入口
+
+如果你想让 ship 报告不再固定比较 `kemm / nsga_style / random`，优先改：
+
+- `DemoConfig.report_algorithms`
+
+报告层现在会按这个顺序构造算法列表、生成代表性 series，并同步写入 `report_metadata.json`。后续新增算法时，不要再回到 `run_report.py` 里手工改多处列表。
+
 ---
 
 ## 6. 目标与分析指标
@@ -245,6 +288,13 @@ ship 主线现在默认走 episode，而不是一次性全局规划。
 - `hard_intrusion`
 
 这些指标默认服务于 radar、parallel、violin 和 summary 表。
+
+另外，`ShipTrajectoryProblem` 现在默认开启了批量去重与 objective cache：
+
+- `population_evaluation_cache`
+- `population_cache_decimals`
+
+它的目的不是改变算法语义，而是避免在同一批 population 中对完全重复或数值上等价的候选反复做整条轨迹仿真。
 
 ---
 
@@ -285,7 +335,20 @@ ship 默认论文图包包括：
 
 其中 `pareto3d / spatiotemporal` 在打开 `interactive_html=True` 时会额外导出 Plotly HTML，且 hover 已包含更完整的科研语义信息，而不只是坐标值。
 
-### 8.1 图表注册表
+### 8.1 representative run 与 aggregate 的边界
+
+当前 ship 报告刻意把两类结果分开：
+
+- `summary.csv / aggregate_summary.csv / summary.json`：聚合所有 repeated runs
+- 轨迹类图：使用 representative run
+
+代表性 run 的选择结果会写到：
+
+- `raw/representative_runs.json`
+
+这个文件应该和正文里的案例分析一起读；如果你在论文里同时使用路线图和统计表，必须说明前者展示代表性轨迹，后者统计所有 repeated runs。
+
+### 8.2 图表注册表
 
 `run_report.py` 现在不再手写逐条调用 inventory 列表，而是使用统一的 figure registry：
 

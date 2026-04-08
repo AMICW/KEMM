@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, List
 import time
 
 import numpy as np
 
 from kemm.algorithms.kemm import KEMM_DMOEA_Improved
+from kemm.core.types import KEMMConfig as RuntimeKEMMConfig
 from ship_simulation.config import DemoConfig
 from ship_simulation.optimizer.interface import ShipOptimizerInterface
 from ship_simulation.optimizer.problem import EvaluationResult
@@ -36,8 +37,27 @@ class ShipKEMMOptimizer:
         self.interface = interface
         self.demo_config = demo_config
         self.context = interface.build_context()
+        self._algo: KEMM_DMOEA_Improved | None = None
+        self._internal_random_state = None
+        self._solve_count = 0
 
-    def optimize(self) -> KEMMOptimizationResult:
+    def reset(self) -> None:
+        self._algo = None
+        self._internal_random_state = None
+        self._solve_count = 0
+
+    def optimize(
+        self,
+        interface: ShipOptimizerInterface | None = None,
+        *,
+        change_time: float = 0.0,
+        reset: bool = False,
+    ) -> KEMMOptimizationResult:
+        if interface is not None:
+            self.interface = interface
+            self.context = interface.build_context()
+        if reset:
+            self.reset()
         kemm_cfg = self.demo_config.kemm
         bounds = (
             self.context.var_bounds[:, 0].astype(float),
@@ -45,27 +65,26 @@ class ShipKEMMOptimizer:
         )
         objective = self.interface.make_objective_function(self.context)
 
-        old_state = np.random.get_state()
-        np.random.seed(kemm_cfg.seed)
+        caller_state = np.random.get_state()
+        if self._internal_random_state is None:
+            np.random.seed(kemm_cfg.seed)
+        else:
+            np.random.set_state(self._internal_random_state)
         t0 = time.perf_counter()
         try:
-            algo = KEMM_DMOEA_Improved(
-                pop_size=kemm_cfg.pop_size,
-                n_var=self.context.n_var,
-                n_obj=self.context.n_obj,
-                var_bounds=bounds,
-                benchmark_aware_prior=False,
-            )
-            algo.initialize()
-            self._inject_initial_guesses(algo.population)
-            algo.fitness = algo.evaluate(algo.population, objective, 0.0)
+            algo = self._ensure_algorithm(bounds, objective)
+
+            if self._solve_count > 0:
+                algo.population = np.clip(algo.population, self.context.var_bounds[:, 0], self.context.var_bounds[:, 1])
+                if kemm_cfg.use_change_response:
+                    algo.respond_to_change(objective, float(change_time))
+                else:
+                    algo.fitness = algo.evaluate(algo.population, objective, float(change_time))
+            self._blend_initial_guess_candidates(algo, objective, float(change_time))
 
             history: List[Dict[str, float]] = [self._summarize_generation(algo, generation=0)]
             for generation in range(1, kemm_cfg.generations + 1):
-                if kemm_cfg.use_change_response and kemm_cfg.refresh_interval > 0 and generation % kemm_cfg.refresh_interval == 0:
-                    algo.respond_to_change(objective, float(generation))
-                else:
-                    algo.evolve_one_gen(objective, float(generation))
+                algo.evolve_one_gen(objective, float(change_time))
                 history.append(self._summarize_generation(algo, generation=generation))
 
             fronts = algo.fast_nds(algo.fitness)
@@ -73,6 +92,7 @@ class ShipKEMMOptimizer:
             pareto_decisions = algo.population[pareto_idx].copy()
             pareto_objectives = algo.fitness[pareto_idx].copy()
             best_decision, best_evaluation = self._select_representative_solution(pareto_decisions, pareto_objectives)
+            self._solve_count += 1
             return KEMMOptimizationResult(
                 best_decision=best_decision,
                 best_evaluation=best_evaluation,
@@ -84,25 +104,71 @@ class ShipKEMMOptimizer:
                 runtime_s=time.perf_counter() - t0,
             )
         finally:
-            np.random.set_state(old_state)
+            self._internal_random_state = np.random.get_state()
+            np.random.set_state(caller_state)
+
+    def _build_runtime_config(self) -> RuntimeKEMMConfig:
+        kemm_cfg = self.demo_config.kemm
+        return replace(
+            kemm_cfg.runtime,
+            pop_size=kemm_cfg.pop_size,
+            n_var=self.context.n_var,
+            n_obj=self.context.n_obj,
+            benchmark_aware_prior=False,
+        )
+
+    def _ensure_algorithm(self, bounds, objective) -> KEMM_DMOEA_Improved:
+        if self._algo is not None and self._algo.n_var == self.context.n_var and self._algo.n_obj == self.context.n_obj:
+            if np.allclose(self._algo.lb, bounds[0]) and np.allclose(self._algo.ub, bounds[1]):
+                return self._algo
+
+        algo = KEMM_DMOEA_Improved(
+            pop_size=self.demo_config.kemm.pop_size,
+            n_var=self.context.n_var,
+            n_obj=self.context.n_obj,
+            var_bounds=bounds,
+            benchmark_aware_prior=False,
+            config=self._build_runtime_config(),
+        )
+        algo.initialize()
+        self._inject_initial_guesses(algo.population)
+        algo.fitness = algo.evaluate(algo.population, objective, 0.0)
+        self._algo = algo
+        self._solve_count = 0
+        return algo
 
     def _inject_initial_guesses(self, population: np.ndarray) -> None:
-        kemm_cfg = self.demo_config.kemm
-        if not kemm_cfg.inject_initial_guess or len(population) == 0:
+        samples = self._initial_guess_samples(len(population))
+        if samples is None or len(samples) == 0:
             return
+        population[: len(samples)] = samples
+
+    def _initial_guess_samples(self, max_count: int) -> np.ndarray | None:
+        kemm_cfg = self.demo_config.kemm
+        if not kemm_cfg.inject_initial_guess or max_count <= 0:
+            return None
         base = np.clip(
             self.context.initial_guess.astype(float),
             self.context.var_bounds[:, 0],
             self.context.var_bounds[:, 1],
         )
-        copies = min(max(1, kemm_cfg.initial_guess_copies), len(population))
-        population[0] = base
+        copies = min(max(1, kemm_cfg.initial_guess_copies), max_count)
+        samples = np.repeat(base[None, :], copies, axis=0)
         if copies == 1:
-            return
+            return samples
         scale = kemm_cfg.initial_guess_jitter_ratio * (self.context.var_bounds[:, 1] - self.context.var_bounds[:, 0])
         noise = np.random.normal(0.0, scale, size=(copies - 1, self.context.n_var))
         seeded = np.clip(base + noise, self.context.var_bounds[:, 0], self.context.var_bounds[:, 1])
-        population[1:copies] = seeded
+        samples[1:copies] = seeded
+        return samples
+
+    def _blend_initial_guess_candidates(self, algo: KEMM_DMOEA_Improved, objective, change_time: float) -> None:
+        samples = self._initial_guess_samples(max(1, min(self.demo_config.kemm.initial_guess_copies, algo.pop_size // 4)))
+        if samples is None or len(samples) == 0:
+            return
+        candidate_pop = np.vstack([algo.population, samples])
+        candidate_fit = algo.evaluate(candidate_pop, objective, change_time)
+        algo.population, algo.fitness = algo.env_selection(candidate_pop, candidate_fit, algo.pop_size)
 
     def _summarize_generation(self, algo: KEMM_DMOEA_Improved, generation: int) -> Dict[str, float]:
         fronts = algo.fast_nds(algo.fitness)

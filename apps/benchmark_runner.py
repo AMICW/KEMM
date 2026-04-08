@@ -22,6 +22,7 @@ import os
 import sys
 import time
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List
@@ -39,6 +40,7 @@ from kemm.algorithms import (
     Tr_DMOEA,
 )
 from kemm.benchmark import DynamicTestProblems, PerformanceMetrics
+from kemm.core.types import ExperimentConfig as SharedExperimentConfig
 from kemm.core.types import KEMMConfig as RuntimeKEMMConfig
 from kemm.reporting import build_report_paths, export_benchmark_report
 from reporting_config import build_benchmark_plot_config
@@ -56,6 +58,19 @@ except ImportError:
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 
+_SHARED_EXPERIMENT_DEFAULTS = SharedExperimentConfig()
+
+
+@contextmanager
+def _temporary_numpy_seed(seed: int):
+    caller_state = np.random.get_state()
+    np.random.seed(int(seed))
+    try:
+        yield
+    finally:
+        np.random.set_state(caller_state)
+
+
 class ExperimentConfig:
     """Benchmark 实验配置。
 
@@ -70,20 +85,20 @@ class ExperimentConfig:
     这样做的目的是让 quick/full 模式切换和论文复现实验更可控。
     """
 
-    POP_SIZE = 100
-    N_VAR = 10
-    N_OBJ = 2
-    NT = 10
-    TAU_T = 10
+    POP_SIZE = _SHARED_EXPERIMENT_DEFAULTS.pop_size
+    N_VAR = _SHARED_EXPERIMENT_DEFAULTS.n_var
+    N_OBJ = _SHARED_EXPERIMENT_DEFAULTS.n_obj
+    NT = _SHARED_EXPERIMENT_DEFAULTS.nt
+    TAU_T = _SHARED_EXPERIMENT_DEFAULTS.tau_t
     SETTINGS = [(5, 10), (10, 10), (10, 20)]
     CANONICAL_SETTING = (10, 10)
-    N_CHANGES = 10
-    GENS_PER_CHANGE = 20
-    N_RUNS = 5
-    SIGNIFICANCE = 0.05
+    N_CHANGES = _SHARED_EXPERIMENT_DEFAULTS.n_changes
+    GENS_PER_CHANGE = _SHARED_EXPERIMENT_DEFAULTS.gens_per_change
+    N_RUNS = _SHARED_EXPERIMENT_DEFAULTS.n_runs
+    SIGNIFICANCE = _SHARED_EXPERIMENT_DEFAULTS.significance
 
-    PROBLEMS_STANDARD = ["FDA1", "FDA2", "FDA3", "dMOP1", "dMOP2", "dMOP3"]
-    PROBLEMS_JY = ["JY1", "JY4"]
+    PROBLEMS_STANDARD = list(_SHARED_EXPERIMENT_DEFAULTS.problems_standard)
+    PROBLEMS_JY = list(_SHARED_EXPERIMENT_DEFAULTS.problems_jy)
     PROBLEMS = PROBLEMS_STANDARD
 
     ALGORITHMS = {
@@ -105,6 +120,32 @@ class ExperimentConfig:
     }
     ABLATION_BENCHMARK_PRIOR = False
     KEMM_CONFIG = RuntimeKEMMConfig()
+
+    def __init__(self):
+        self.POP_SIZE = int(self.__class__.POP_SIZE)
+        self.N_VAR = int(self.__class__.N_VAR)
+        self.N_OBJ = int(self.__class__.N_OBJ)
+        self.NT = int(self.__class__.NT)
+        self.TAU_T = int(self.__class__.TAU_T)
+        self.SETTINGS = [tuple(map(int, setting)) for setting in self.__class__.SETTINGS]
+        self.CANONICAL_SETTING = tuple(map(int, self.__class__.CANONICAL_SETTING))
+        self.N_CHANGES = int(self.__class__.N_CHANGES)
+        self.GENS_PER_CHANGE = int(self.__class__.GENS_PER_CHANGE)
+        self.N_RUNS = int(self.__class__.N_RUNS)
+        self.SIGNIFICANCE = float(self.__class__.SIGNIFICANCE)
+        self.PROBLEMS_STANDARD = list(self.__class__.PROBLEMS_STANDARD)
+        self.PROBLEMS_JY = list(self.__class__.PROBLEMS_JY)
+        self.PROBLEMS = list(self.__class__.PROBLEMS)
+        self.ALGORITHMS = dict(self.__class__.ALGORITHMS)
+        self.ABLATION_VARIANTS = {
+            name: {
+                key: (dict(value) if isinstance(value, dict) else value)
+                for key, value in spec.items()
+            }
+            for name, spec in self.__class__.ABLATION_VARIANTS.items()
+        }
+        self.ABLATION_BENCHMARK_PRIOR = bool(self.__class__.ABLATION_BENCHMARK_PRIOR)
+        self.KEMM_CONFIG = replace(self.__class__.KEMM_CONFIG)
 
 
 class ExperimentRunner:
@@ -228,8 +269,9 @@ class ExperimentRunner:
                             flush=True,
                         )
                         seed_offset = sum((index + 1) * ord(ch) for index, ch in enumerate(f"{setting_key}:{algo_name}")) % 10000
-                        np.random.seed(run * 1000 + seed_offset)
-                        result = self._run_single(algo_spec, obj_func, pof_func, problem_suite=problem_suite)
+                        run_seed = run * 1000 + seed_offset
+                        with _temporary_numpy_seed(run_seed):
+                            result = self._run_single(algo_spec, obj_func, pof_func, problem_suite=problem_suite)
                         metrics = setting_results[setting_key][algo_name][prob_name]
                         metrics["MIGD"].append(result["migd"])
                         metrics["SP"].append(result["sp"])

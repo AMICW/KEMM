@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Tuple
 
+from kemm.core.types import KEMMConfig as RuntimeKEMMConfig
+
 
 @dataclass
 class ShipConfig:
@@ -71,6 +73,12 @@ class EpisodeConfig:
 class ScenarioTuningConfig:
     """单个场景的几何与环境生成调参。"""
 
+    family_name: str = "default"
+    scenario_seed: int | None = None
+    difficulty_scale: float = 1.0
+    geometry_jitter_m: float = 0.0
+    traffic_heading_jitter_deg: float = 0.0
+    current_direction_jitter_deg: float = 0.0
     start_offset: Tuple[float, float] = (0.0, 0.0)
     goal_offset: Tuple[float, float] = (0.0, 0.0)
     own_speed_scale: float = 1.0
@@ -86,6 +94,7 @@ class ScenarioTuningConfig:
 class HarborClutterTuningConfig(ScenarioTuningConfig):
     """高密障碍港区的专项生成参数。"""
 
+    family_name: str = "harbor_clutter"
     start_offset: Tuple[float, float] = (0.0, 220.0)
     goal_offset: Tuple[float, float] = (0.0, -220.0)
     own_speed_scale: float = 1.04
@@ -161,6 +170,8 @@ class ProblemConfig:
     environment_risk_weight: float = 0.1
     tcpa_decay_seconds: float = 480.0
     safety_clearance: float = 180.0
+    population_evaluation_cache: bool = True
+    population_cache_decimals: int = 8
     simulation: SimulationConfig = field(default_factory=SimulationConfig)
     ship: ShipConfig = field(default_factory=ShipConfig)
     environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
@@ -180,7 +191,8 @@ class KEMMConfig:
     inject_initial_guess: bool = True
     initial_guess_copies: int = 4
     initial_guess_jitter_ratio: float = 0.04
-    use_change_response: bool = False
+    use_change_response: bool = True
+    runtime: RuntimeKEMMConfig = field(default_factory=lambda: RuntimeKEMMConfig(benchmark_aware_prior=False))
 
 
 @dataclass
@@ -193,6 +205,7 @@ class DemoConfig:
     evolutionary_baseline_pop_size: int = 36
     evolutionary_baseline_generations: int = 16
     n_runs: int = 3
+    report_algorithms: tuple[str, ...] = ("kemm", "nsga_style", "random")
     plot_preset: str = "paper"
     appendix_plots: bool = False
     kemm: KEMMConfig = field(default_factory=KEMMConfig)

@@ -60,6 +60,7 @@ class PlanningEpisodeResult:
     terminated_reason: str
     experiment_profile: str = "baseline"
     change_history: list[dict[str, object]] | None = None
+    problem_config: ProblemConfig | None = None
 
     @property
     def result(self) -> EvaluationResult:
@@ -186,6 +187,7 @@ class RollingHorizonPlanner:
         self.config = config
         self.demo_config = demo_config
         self.dt = self.config.simulation.dt
+        self._kemm_solver: ShipKEMMOptimizer | None = None
 
     @staticmethod
     def _scale_scalar_layers(layers: Sequence[object], amplitude_scale: float) -> list[object]:
@@ -315,6 +317,7 @@ class RollingHorizonPlanner:
 
     def run(self, optimizer_name: str = "kemm") -> PlanningEpisodeResult:
         episode_cfg = self.demo_config.episode
+        self._kemm_solver = None
         current_time = 0.0
         own_state = self.scenario.own_ship.initial_state
         target_states = [target.initial_state for target in self.scenario.target_ships]
@@ -342,7 +345,7 @@ class RollingHorizonPlanner:
             local_scenario, local_cfg, applied_changes = self._apply_experiment_changes(local_scenario, local_cfg, step_idx)
             interface = ShipOptimizerInterface(local_scenario, local_cfg)
             solver_start = time.perf_counter()
-            solve_result = self._solve_local_problem(interface, optimizer_name)
+            solve_result = self._solve_local_problem(interface, optimizer_name, change_time=current_time)
             runtime_s = time.perf_counter() - solver_start
             step_result = PlanningStepResult(
                 step_index=step_idx,
@@ -470,12 +473,15 @@ class RollingHorizonPlanner:
             terminated_reason=terminated_reason,
             experiment_profile=self.config.experiment.profile_name,
             change_history=[change for step in step_results for change in step.applied_changes],
+            problem_config=self.config,
         )
 
-    def _solve_local_problem(self, interface: ShipOptimizerInterface, optimizer_name: str):
+    def _solve_local_problem(self, interface: ShipOptimizerInterface, optimizer_name: str, *, change_time: float):
         key = optimizer_name.lower()
         if key == "kemm":
-            return ShipKEMMOptimizer(interface=interface, demo_config=self.demo_config).optimize()
+            if self._kemm_solver is None:
+                self._kemm_solver = ShipKEMMOptimizer(interface=interface, demo_config=self.demo_config)
+            return self._kemm_solver.optimize(interface=interface, change_time=change_time)
         if key == "nsga_style":
             return ShipNSGAStyleOptimizer(interface=interface, demo_config=self.demo_config).optimize()
         if key == "random":

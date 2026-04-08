@@ -1,6 +1,7 @@
 import os
 import unittest
 from contextlib import ExitStack
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,6 +9,7 @@ from unittest.mock import patch
 import matplotlib
 import numpy as np
 
+from kemm.core.types import KEMMConfig as RuntimeKEMMConfig
 from reporting_config import PublicationStyle, ShipPlotConfig, interactive_bundle_path
 from ship_simulation.config import DemoConfig, KEMMConfig, apply_experiment_profile, build_default_config
 from ship_simulation.core.environment import GridScalarField, GridVectorField
@@ -125,6 +127,7 @@ class ShipSimulationSmokeTests(unittest.TestCase):
             terminated_reason="stub",
             experiment_profile="baseline",
             change_history=[],
+            problem_config=self.config,
         )
 
     def test_optimizer_context_matches_problem_shape(self):
@@ -154,6 +157,63 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         self.assertEqual(result.population.shape[1], self.interface.build_context().n_var)
         self.assertEqual(result.fitness.shape[1], 3)
         self.assertTrue(result.best_evaluation.reached_goal)
+
+    def test_ship_kemm_reuses_persistent_algorithm_across_replans(self):
+        demo = DemoConfig(
+            optimizer_name="kemm",
+            kemm=KEMMConfig(
+                pop_size=16,
+                generations=3,
+                seed=9,
+                use_change_response=True,
+                inject_initial_guess=True,
+                initial_guess_copies=3,
+                initial_guess_jitter_ratio=0.02,
+            ),
+        )
+        solver = ShipKEMMOptimizer(self.interface, demo)
+        first = solver.optimize(change_time=0.0)
+        algo_id = id(solver._algo)
+        self.assertTrue(first.best_evaluation.reached_goal)
+
+        shifted_scenario = self.scenario.with_updated_states(
+            replace(self.scenario.own_ship.initial_state, x=self.scenario.own_ship.initial_state.x + 120.0),
+            [replace(target.initial_state) for target in self.scenario.target_ships],
+            name_suffix="[shifted]",
+        )
+        shifted_interface = ShipOptimizerInterface(shifted_scenario, self.config)
+        second = solver.optimize(interface=shifted_interface, change_time=180.0)
+
+        self.assertEqual(id(solver._algo), algo_id)
+        self.assertGreaterEqual(len(solver._algo.change_diagnostics_history), 1)
+        self.assertEqual(solver._algo.last_change_diagnostics.time_step, 1)
+        self.assertEqual(second.population.shape[1], shifted_interface.build_context().n_var)
+
+    def test_ship_kemm_runtime_config_is_forwarded_to_algorithm(self):
+        demo = DemoConfig(
+            optimizer_name="kemm",
+            kemm=KEMMConfig(
+                pop_size=14,
+                generations=2,
+                seed=5,
+                runtime=replace(
+                    RuntimeKEMMConfig(),
+                    benchmark_aware_prior=False,
+                    enable_memory=False,
+                    enable_prediction=False,
+                    enable_transfer=False,
+                    enable_adaptive=False,
+                ),
+            ),
+        )
+        solver = ShipKEMMOptimizer(self.interface, demo)
+        solver.optimize(change_time=0.0)
+        self.assertIsNotNone(solver._algo)
+        self.assertFalse(solver._algo.config.benchmark_aware_prior)
+        self.assertFalse(solver._algo.config.enable_memory)
+        self.assertFalse(solver._algo.config.enable_prediction)
+        self.assertFalse(solver._algo.config.enable_transfer)
+        self.assertFalse(solver._algo.config.enable_adaptive)
 
     def test_rolling_episode_records_multiple_planning_steps(self):
         demo = DemoConfig(random_search_samples=12)
@@ -202,6 +262,35 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         self.assertEqual(len(tuned_circles), 5)
         self.assertEqual(sum(isinstance(obstacle, KeepOutZone) for obstacle in tuned_harbor.static_obstacles), 2)
         self.assertLess(np.mean([obstacle.radius for obstacle in tuned_circles]), np.mean([obstacle.radius for obstacle in default_circles]))
+
+    def test_seeded_scenario_family_is_reproducible_and_configurable(self):
+        tuned_config = build_default_config()
+        crossing_cfg = tuned_config.scenario_generation.crossing
+        crossing_cfg.family_name = "crossing_family_a"
+        crossing_cfg.scenario_seed = 17
+        crossing_cfg.geometry_jitter_m = 120.0
+        crossing_cfg.traffic_heading_jitter_deg = 6.0
+        crossing_cfg.current_direction_jitter_deg = 8.0
+        crossing_cfg.difficulty_scale = 1.25
+
+        scenario_a = ScenarioGenerator(tuned_config).generate("crossing")
+        scenario_b = ScenarioGenerator(tuned_config).generate("crossing")
+
+        other_config = build_default_config()
+        other_crossing = other_config.scenario_generation.crossing
+        other_crossing.family_name = "crossing_family_b"
+        other_crossing.scenario_seed = 23
+        other_crossing.geometry_jitter_m = 120.0
+        other_crossing.traffic_heading_jitter_deg = 6.0
+        other_crossing.current_direction_jitter_deg = 8.0
+        other_crossing.difficulty_scale = 1.25
+        scenario_c = ScenarioGenerator(other_config).generate("crossing")
+
+        np.testing.assert_allclose(scenario_a.own_ship.initial_state.position(), scenario_b.own_ship.initial_state.position())
+        self.assertAlmostEqual(scenario_a.target_ships[0].initial_state.heading, scenario_b.target_ships[0].initial_state.heading)
+        self.assertFalse(np.allclose(scenario_a.own_ship.initial_state.position(), scenario_c.own_ship.initial_state.position()))
+        self.assertEqual(scenario_a.metadata.family, "crossing_family_a")
+        self.assertIsNotNone(scenario_a.metadata.layout_seed)
 
     def test_experiment_profile_applies_dynamic_changes_to_steps(self):
         tuned_config = build_default_config()
@@ -525,6 +614,86 @@ class ShipSimulationSmokeTests(unittest.TestCase):
                     pass
         self.assertIn("harbor_clutter", recorded)
 
+    def test_report_algorithm_registry_is_configurable(self):
+        recorded_algorithms: list[str] = []
+        noop_names = [
+            "save_environment_overlay",
+            "save_route_planning_panel",
+            "save_change_timeline_panel",
+            "save_scenario_gallery",
+            "save_route_bundle_gallery",
+            "save_dynamic_avoidance_snapshots",
+            "save_spatiotemporal_plot",
+            "save_control_time_series",
+            "save_pareto_3d_with_knee",
+            "save_pareto_projection_panel",
+            "save_risk_breakdown_time_series",
+            "save_safety_envelope_plot",
+            "save_parallel_coordinates",
+            "save_radar_chart",
+            "save_convergence_statistics",
+            "save_distribution_violin",
+            "save_run_statistics_panel",
+            "save_summary_dashboard",
+            "_write_csv",
+            "_write_markdown",
+            "_write_figure_inventory",
+        ]
+
+        class DummyPlanner:
+            def __init__(self, scenario, config, demo_config):
+                self.scenario = scenario
+
+            def run(self, optimizer_name="kemm"):
+                recorded_algorithms.append(optimizer_name)
+                scenario_key = self.scenario.name.lower().replace(" ", "_").replace("-", "_")
+                return self_test._stub_episode(scenario_key, optimizer_name=optimizer_name)
+
+        demo = DemoConfig()
+        demo.n_runs = 1
+        demo.report_algorithms = ("random", "kemm")
+        self_test = self
+        tmp_root = Path("ship_simulation/outputs/test_artifacts/algorithm_registry_stub")
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(run_report_module, "RollingHorizonPlanner", DummyPlanner))
+                for name in noop_names:
+                    stack.enter_context(patch.object(run_report_module, name, lambda *args, **kwargs: None))
+                run_report_module.generate_report_with_config(
+                    config=self.config,
+                    demo_config=demo,
+                    output_root=tmp_root,
+                    plot_config=ShipPlotConfig(style=PublicationStyle(dpi=120)),
+                    scenario_keys=["crossing"],
+                    verbose=False,
+                    n_runs=1,
+                )
+                metadata = (tmp_root / "raw" / "report_metadata.json").read_text(encoding="utf-8")
+                representatives = (tmp_root / "raw" / "representative_runs.json").read_text(encoding="utf-8")
+        finally:
+            for path in sorted(tmp_root.rglob("*"), reverse=True):
+                if path.is_file():
+                    try:
+                        path.unlink()
+                    except PermissionError:
+                        pass
+                elif path.is_dir():
+                    try:
+                        path.rmdir()
+                    except OSError:
+                        pass
+            if tmp_root.exists():
+                try:
+                    tmp_root.rmdir()
+                except OSError:
+                    pass
+        self.assertEqual(recorded_algorithms, ["random", "kemm"])
+        self.assertIn('"key": "random"', metadata)
+        self.assertIn('"key": "kemm"', metadata)
+        self.assertIn('"random"', representatives)
+        self.assertIn('"kemm"', representatives)
+
     def test_figure_manifest_and_inventory_follow_registered_specs(self):
         tmp_root = Path("ship_simulation/outputs/test_artifacts/manifest_stub")
         tmp_root.mkdir(parents=True, exist_ok=True)
@@ -552,6 +721,14 @@ class ShipSimulationSmokeTests(unittest.TestCase):
                     tmp_root.rmdir()
                 except OSError:
                     pass
+
+    def test_population_evaluation_cache_deduplicates_identical_candidates(self):
+        problem = self.interface.problem
+        population = np.vstack([problem.initial_guess(), problem.initial_guess(), problem.initial_guess()])
+        with patch.object(problem, "simulate", wraps=problem.simulate) as wrapped:
+            values = problem.evaluate_population(population)
+        self.assertEqual(values.shape, (3, 3))
+        self.assertEqual(wrapped.call_count, 1)
 
 
 if __name__ == "__main__":

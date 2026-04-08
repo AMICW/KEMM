@@ -350,6 +350,15 @@ python -m apps.benchmark_runner --quick --plot-preset ieee
 - `nature`：更强调视觉展示
 - `thesis`：不强依赖 SciencePlots，适合长文档或毕业论文
 
+如果你想统一修改 ship 图的视觉主题，优先改 [reporting_config.py](reporting_config.py) 里的 `ShipPlotConfig`。现在颜色、卡片、图例和底图强度都已经集中到这一处，不需要再去每个绘图函数里找硬编码。最常改的是：
+
+- `own_ship_color / baseline_color / third_algo_color`
+- `start_marker_color / goal_marker_color / traffic_marker_color`
+- `panel_facecolor / legend_facecolor / legend_edgecolor`
+- `card_facecolor / card_edgecolor / card_alpha`
+- `scalar_field_floor_quantile / scalar_field_alpha / vector_field_alpha`
+- `dashboard_width_ratios / dashboard_height_ratios`
+
 如果你想直接改 ship 场景生成参数，优先改：
 
 - `ship_simulation/config.py` 里的 `ProblemConfig.scenario_generation`
@@ -368,6 +377,28 @@ config.scenario_generation.harbor_clutter.channel_width_scale = 1.20
 ```
 
 这组参数会直接影响 `harbor_clutter` 的障碍数量、障碍尺度、目标船数量和通航窗口宽度。
+
+如果你想把场景改成“同一 family 下的可重复变体”，现在也不用回到 `generator.py` 里改硬编码。优先改：
+
+- `family_name`
+- `scenario_seed`
+- `difficulty_scale`
+- `geometry_jitter_m`
+- `traffic_heading_jitter_deg`
+- `current_direction_jitter_deg`
+
+例如：
+
+```python
+config.scenario_generation.crossing.family_name = "crossing_family_a"
+config.scenario_generation.crossing.scenario_seed = 17
+config.scenario_generation.crossing.difficulty_scale = 1.20
+config.scenario_generation.crossing.geometry_jitter_m = 120.0
+config.scenario_generation.crossing.traffic_heading_jitter_deg = 6.0
+config.scenario_generation.crossing.current_direction_jitter_deg = 8.0
+```
+
+这样生成的场景仍然保持 `crossing` 的语义，但会输出同 family 的可复现实验变体；对应 seed 和 family 会写进 `scenario_catalog.json`。
 
 如果你想直接启用面向 KEMM 机制验证的动态实验 profile，优先改：
 
@@ -391,11 +422,55 @@ apply_experiment_profile(config, "shock")
 
 这些 profile 会直接影响滚动重规划过程中的环境漂移、目标船意图变化和通道 closure 扰动；对应的解释图是每个场景新增的 `*_change_timeline.png`。
 
+如果你想直接调 ship 侧 KEMM 的真实机制开关和预算，优先改：
+
+- `ship_simulation/config.py` 里的 `DemoConfig.kemm`
+- `ship_simulation/config.py` 里的 `DemoConfig.kemm.runtime`
+
+其中：
+
+- `DemoConfig.kemm.pop_size / generations / seed` 控制 ship 侧运行预算
+- `DemoConfig.kemm.use_change_response` 控制滚动重规划时是否调用 KEMM 的 change response
+- `DemoConfig.kemm.runtime.enable_memory / enable_prediction / enable_transfer / enable_adaptive` 对应真实 KEMM 模块开关
+
+例如：
+
+```python
+from ship_simulation.config import build_default_demo_config
+
+demo = build_default_demo_config()
+demo.kemm.generations = 28
+demo.kemm.use_change_response = True
+demo.kemm.runtime.enable_prediction = True
+demo.kemm.runtime.enable_transfer = False
+```
+
+当前 ship 主线里，同一个 episode 内会复用同一个 KEMM 求解器 session，而不是每个 replanning step 都重新新建算法对象。这意味着 `memory / prediction / transfer / adaptive` 的状态会沿滚动重规划继续积累，更接近真正的动态优化语义。
+
+如果你想调整 ship 报告里到底比较哪些算法，优先改：
+
+- `ship_simulation/config.py` 里的 `DemoConfig.report_algorithms`
+
+例如：
+
+```python
+demo = build_default_demo_config()
+demo.report_algorithms = ("kemm", "random")
+```
+
 报告原始目录还会额外导出：
 
 - `raw/figure_manifest.json`
+- `raw/representative_runs.json`
 
-它和 `reports/figure_inventory.md` 由同一套 figure registry 自动生成。后面如果继续加图，优先在这套 registry 上扩，不要再手工同步多个列表。
+其中：
+
+- `figure_manifest.json` 说明默认理论导出了哪些图
+- `representative_runs.json` 记录每个场景、每个算法被选中的代表性 run
+
+当前 summary 表和 CSV 统计的是全部 repeated runs，而路线、时空轨迹、风险分解这类图仍然使用 representative run。后面写论文时，优先把这层区别说清楚。
+
+它们和 `reports/figure_inventory.md` 由同一套 figure registry 自动生成。后面如果继续加图，优先在这套 registry 上扩，不要再手工同步多个列表。
 
 ---
 

@@ -48,6 +48,7 @@ class ShipTrajectoryProblem:
         self.n_var = self.n_waypoints * 3
         self.n_obj = 3
         self.var_bounds = self._build_bounds()
+        self._objective_cache: dict[bytes, np.ndarray] = {}
 
     def _build_bounds(self) -> np.ndarray:
         xmin, xmax, ymin, ymax = self.scenario.area
@@ -175,12 +176,41 @@ class ShipTrajectoryProblem:
         ]
         return self.score_trajectory_bundle(own_trajectory, target_trajectories, bounds_penalty=bounds_penalty)
 
+    def _cache_key(self, decision_vector: Sequence[float]) -> bytes:
+        clipped = np.clip(np.asarray(decision_vector, dtype=float), self.var_bounds[:, 0], self.var_bounds[:, 1])
+        if self.config.population_cache_decimals >= 0:
+            clipped = np.round(clipped, decimals=int(self.config.population_cache_decimals))
+        return np.ascontiguousarray(clipped, dtype=np.float64).tobytes()
+
     def evaluate(self, decision_vector: Sequence[float]) -> np.ndarray:
-        return self.simulate(decision_vector).objectives
+        if self.config.population_evaluation_cache:
+            key = self._cache_key(decision_vector)
+            cached = self._objective_cache.get(key)
+            if cached is not None:
+                return cached.copy()
+        objectives = self.simulate(decision_vector).objectives
+        if self.config.population_evaluation_cache:
+            self._objective_cache[key] = objectives.copy()
+        return objectives
 
     def evaluate_population(self, population: np.ndarray) -> np.ndarray:
         pop = np.atleast_2d(np.asarray(population, dtype=float))
-        return np.vstack([self.evaluate(individual) for individual in pop])
+        if not self.config.population_evaluation_cache:
+            return np.vstack([self.evaluate(individual) for individual in pop])
+
+        inverse = np.zeros(len(pop), dtype=int)
+        unique_vectors: list[np.ndarray] = []
+        key_to_index: dict[bytes, int] = {}
+        for idx, individual in enumerate(pop):
+            key = self._cache_key(individual)
+            mapped = key_to_index.get(key)
+            if mapped is None:
+                mapped = len(unique_vectors)
+                key_to_index[key] = mapped
+                unique_vectors.append(np.asarray(individual, dtype=float))
+            inverse[idx] = mapped
+        unique_objectives = np.vstack([self.evaluate(individual) for individual in unique_vectors])
+        return unique_objectives[inverse]
 
     def describe(self) -> Dict[str, object]:
         return {

@@ -1,4 +1,4 @@
-﻿"""将通用 KEMM 适配到 ship 主线。"""
+"""将通用 KEMM 适配到 ship 主线。"""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ class ShipKEMMOptimizer:
             fronts = algo.fast_nds(algo.fitness)
             pareto_idx = np.asarray(fronts[0] if fronts else np.arange(len(algo.population)), dtype=int)
             pareto_decisions = algo.population[pareto_idx].copy()
-            pareto_objectives = algo.fitness[pareto_idx].copy()
+            pareto_objectives = algo.fitness[pareto_idx, :3].copy()
             best_decision, best_evaluation = self._select_representative_solution(pareto_decisions, pareto_objectives)
             self._solve_count += 1
             return KEMMOptimizationResult(
@@ -173,8 +173,8 @@ class ShipKEMMOptimizer:
     def _summarize_generation(self, algo: KEMM_DMOEA_Improved, generation: int) -> Dict[str, float]:
         fronts = algo.fast_nds(algo.fitness)
         pareto_idx = fronts[0] if fronts else list(range(len(algo.population)))
-        pf = algo.fitness[pareto_idx]
-        mins = np.min(algo.fitness, axis=0)
+        pf = algo.fitness[pareto_idx, :3]
+        mins = np.min(algo.fitness[:, :3], axis=0)
         weights = np.asarray(self.interface.config.objective_weights, dtype=float)
         weights = weights / max(float(np.sum(weights)), 1e-9)
         summary = {
@@ -183,7 +183,7 @@ class ShipKEMMOptimizer:
             "best_fuel": float(mins[0]),
             "best_time": float(mins[1]),
             "best_risk": float(mins[2]),
-            "best_weighted_score": float(np.min(algo.fitness @ weights)),
+            "best_weighted_score": float(np.min(algo.fitness[:, :3] @ weights)),
             "pareto_mean_fuel": float(np.mean(pf[:, 0])),
             "pareto_mean_time": float(np.mean(pf[:, 1])),
             "pareto_mean_risk": float(np.mean(pf[:, 2])),
@@ -192,6 +192,13 @@ class ShipKEMMOptimizer:
         if diagnostics is not None:
             summary["prediction_confidence"] = float(diagnostics.prediction_confidence)
             summary["response_quality"] = float(diagnostics.response_quality)
+            
+        ratios = getattr(algo, "last_operator_ratios", None)
+        if ratios is not None and len(ratios) == 4:
+            summary["ratio_memory"] = float(ratios[0])
+            summary["ratio_predict"] = float(ratios[1])
+            summary["ratio_transfer"] = float(ratios[2])
+            summary["ratio_reinit"] = float(ratios[3])
         return summary
 
     def _select_representative_solution(
@@ -211,8 +218,9 @@ class ShipKEMMOptimizer:
     def _pick_by_weighted_score(self, objectives: np.ndarray) -> int:
         if len(objectives) == 1:
             return 0
-        spread = np.ptp(objectives, axis=0)
-        normalized = (objectives - objectives.min(axis=0)) / (spread + 1e-9)
+        obj_only = objectives[:, :3]
+        spread = np.ptp(obj_only, axis=0)
+        normalized = (obj_only - obj_only.min(axis=0)) / (spread + 1e-9)
         weights = np.asarray(self.interface.config.objective_weights, dtype=float)
         weights = weights / np.sum(weights)
         scores = normalized @ weights

@@ -1,4 +1,4 @@
-﻿"""滚动重规划执行层。"""
+"""滚动重规划执行层。"""
 
 from __future__ import annotations
 
@@ -498,18 +498,18 @@ class RollingHorizonPlanner:
         fitness = context.evaluate_population(decisions)
         evaluations = [interface.simulate(individual) for individual in decisions]
         best_idx = select_representative_index(
-            fitness,
+            fitness[:, :3],
             evaluations,
             self.config.objective_weights,
             safety_clearance=self.config.safety_clearance,
         )
         best_evaluation = evaluations[best_idx]
-        pareto_idx = self._nondominated_indices(fitness)
+        pareto_idx = self._nondominated_indices(fitness[:, :3])
         return EvolutionaryOptimizationResult(
             best_decision=decisions[best_idx].copy(),
             best_evaluation=best_evaluation,
             pareto_decisions=decisions[pareto_idx].copy(),
-            pareto_objectives=fitness[pareto_idx].copy(),
+            pareto_objectives=fitness[pareto_idx, :3].copy(),
             population=decisions.copy(),
             fitness=fitness.copy(),
             history=[{

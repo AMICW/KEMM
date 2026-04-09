@@ -1,4 +1,4 @@
-﻿"""KEMM algorithm implementation.
+"""KEMM algorithm implementation.
 
 这个文件只负责 KEMM 主流程编排，不再把 benchmark 强化逻辑和通用核心混在一起。
 
@@ -100,6 +100,7 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
         self._time_step = 0
         self._centroid_history: list[np.ndarray] = []
         self.last_change_diagnostics: KEMMChangeDiagnostics | None = None
+        self.last_operator_ratios: np.ndarray | None = None
         self.change_diagnostics_history: list[KEMMChangeDiagnostics] = []
 
     def respond_to_change(self, obj_func, t):
@@ -274,14 +275,18 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
         return probe[: self.config.probe_dim]
 
     def _resolve_operator_ratios(self) -> np.ndarray:
-        """根据 ablation 开关返回最终使用的候选来源比例。"""
+        """根据 ablation 开关和上下文 Bandit 返回最终使用的候选来源比例。"""
 
         if not self.config.enable_adaptive:
-            return self._fixed_operator_ratios()
+            ratios = self._fixed_operator_ratios()
+            self.last_operator_ratios = ratios
+            return ratios
 
-        ratios, _ = self._operator_selector.get_ratios()
-        ratios = self._adjust_operator_ratios(ratios)
-        return self._apply_operator_gates(ratios)
+        change_mag = self._drift_detector.get_change_magnitude()
+        ratios, _ = self._operator_selector.get_ratios(change_magnitude=change_mag)
+        final_ratios = self._apply_operator_gates(ratios)
+        self.last_operator_ratios = final_ratios
+        return final_ratios
 
     def _fixed_operator_ratios(self) -> np.ndarray:
         """在禁用 adaptive 时对启用模块和随机重启做等比分配。"""
@@ -313,20 +318,7 @@ class KEMM_DMOEA_Improved(BaseDMOEA):
             return gated
         return gated / gated.sum()
 
-    def _adjust_operator_ratios(self, base_ratios: np.ndarray) -> np.ndarray:
-        """结合环境变化强度对 adaptive 基础比例做二次修正。"""
 
-        change_mag = self._drift_detector.get_change_magnitude()
-        transferability = self._drift_detector.predict_transferability()
-        ratios = base_ratios.copy()
-        ratios[0] += self.config.memory_transferability_bonus * transferability
-        ratios[2] += self.config.transfer_transferability_bonus * transferability
-        ratios[1] += self.config.prediction_stability_bonus * (1.0 - change_mag)
-        ratios[1] -= self.config.prediction_change_penalty * change_mag
-        ratios[2] -= self.config.transfer_change_penalty * change_mag
-        ratios[3] += self.config.reinit_change_bonus * change_mag
-        ratios = np.maximum(ratios, self.config.min_operator_ratio)
-        return ratios / ratios.sum()
 
     def _allocate_operator_counts(self, ratios: np.ndarray) -> tuple[int, int, int, int]:
         """把连续比例映射为整数候选数量。"""

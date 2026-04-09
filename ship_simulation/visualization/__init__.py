@@ -1,4 +1,4 @@
-﻿"""ship 可视化导出。"""
+"""ship 可视化导出。"""
 
 from reporting_config import ShipPlotConfig
 from ship_simulation.visualization.animator import TrajectoryAnimator
@@ -24,12 +24,15 @@ from ship_simulation.visualization.report_plots import (
     save_route_planning_panel,
     save_route_bundle_gallery,
     save_run_statistics_panel,
+    save_runtime_tradeoff,
     save_safety_envelope_plot,
     save_scenario_gallery,
     save_speed_profiles,
     save_spatiotemporal_plot,
     save_summary_dashboard,
+    save_decision_space_projection,
     save_trajectory_comparison,
+    save_operator_allocation_history,
 )
 
 __all__ = [
@@ -56,10 +59,12 @@ __all__ = [
     "save_route_planning_panel",
     "save_route_bundle_gallery",
     "save_run_statistics_panel",
+    "save_runtime_tradeoff",
     "save_safety_envelope_plot",
     "save_scenario_gallery",
     "save_speed_profiles",
     "save_spatiotemporal_plot",
     "save_summary_dashboard",
+    "save_decision_space_projection",
     "save_trajectory_comparison",
 ]

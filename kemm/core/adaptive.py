@@ -229,7 +229,8 @@ class AdaptiveOperatorSelector:
         window: int = 10,
         c: float = 0.5,
         temperature: float = 0.8,
-        min_ratio: float = 0.05
+        min_ratio: float = 0.05,
+        n_contexts: int = 3
     ):
         """
         Args:
@@ -237,57 +238,53 @@ class AdaptiveOperatorSelector:
             c: UCB 探索系数
             temperature: softmax 温度 (比例选择时)
             min_ratio: 每个策略的最小比例 (保证多样性)
+            n_contexts: 上下文状态数 (基于变化幅度划分为不同环境)
         """
         self.temperature = temperature
         self.min_ratio = min_ratio
+        self.n_contexts = n_contexts
 
-
-        # UCB1 MAB
-        self.bandit = UCB1Bandit(
-            n_arms=4,
-            window=window,
-            c=c,
-            arm_names=self.ARM_NAMES
-        )
-
+        self.bandits = [
+            UCB1Bandit(
+                n_arms=4,
+                window=window,
+                c=c,
+                arm_names=self.ARM_NAMES
+            ) for _ in range(n_contexts)
+        ]
 
         # 记录上一次的 IGD (用于计算奖励)
         self._prev_igd: Optional[float] = None
         self._prev_ratios: Optional[np.ndarray] = None
+        self._prev_context: int = 0
 
 
         # 统计
         self.update_count = 0
 
 
-    def get_ratios(self) -> Tuple[np.ndarray, dict]:
+    def _get_context_bucket(self, change_magnitude: float) -> int:
+        idx = int(change_magnitude * self.n_contexts)
+        return min(idx, self.n_contexts - 1)
+
+    def get_ratios(self, change_magnitude: float = 0.5) -> Tuple[np.ndarray, dict]:
         """
         获取本次各策略的分配比例
-        
-        Returns:
-            ratios: (4,) 各策略比例 [memory, predict, transfer, reinit]
-            info: 调试信息字典
-        
-        用法示例:
-            ratios, info = selector.get_ratios()
-            n_memory   = int(pop_size * ratios[0])
-            n_predict  = int(pop_size * ratios[1])
-            n_transfer = int(pop_size * ratios[2])
-            n_reinit   = pop_size - n_memory - n_predict - n_transfer
         """
-        ratios = self.bandit.select_ratios(temperature=self.temperature)
-
+        context_idx = self._get_context_bucket(change_magnitude)
+        bandit = self.bandits[context_idx]
+        ratios = bandit.select_ratios(temperature=self.temperature)
 
         # 确保最小比例
         ratios = np.maximum(ratios, self.min_ratio)
         ratios = ratios / ratios.sum()
 
-
         self._prev_ratios = ratios.copy()
+        self._prev_context = context_idx
 
-
-        stats = self.bandit.get_statistics()
+        stats = bandit.get_statistics()
         info = {
+            'context': context_idx,
             'ratios': ratios,
             'ucb_values': stats['ucb'],
             'q_values': stats['q_values'],
@@ -353,7 +350,7 @@ class AdaptiveOperatorSelector:
                     credited_reward = reward
                 else:
                     credited_reward = reward * min(0.35, ratio)
-                self.bandit.update(arm_idx, credited_reward)
+                self.bandits[self._prev_context].update(arm_idx, credited_reward)
 
 
         self._prev_igd = current_value
@@ -363,14 +360,8 @@ class AdaptiveOperatorSelector:
     def force_update(self, arm_idx: int, reward: float):
         """
         强制更新单个臂 (用于精确的策略-奖励归因)
-        
-        当能明确归因某个策略产生了效果时使用。
-        
-        Args:
-            arm_idx: 臂索引 (使用类常量 MEMORY/PREDICT/TRANSFER/REINIT)
-            reward: 奖励值 [0, 1]
         """
-        self.bandit.update(arm_idx, reward)
+        self.bandits[self._prev_context].update(arm_idx, reward)
 
 
     def get_recommended_mode(self) -> str:
@@ -392,9 +383,10 @@ class AdaptiveOperatorSelector:
 
     def print_status(self):
         """打印当前 MAB 状态 (调试用)"""
-        stats = self.bandit.get_statistics()
+        bandit = self.bandits[self._prev_context]
+        stats = bandit.get_statistics()
         ratios = stats['current_ratios']
-        print(f"\n  [MAB 状态] 总更新次数: {self.update_count}")
+        print(f"\n  [MAB Context {self._prev_context}] 总更新次数: {self.update_count}")
         print(f"  {'策略':<12} {'Q值':>8} {'探索':>8} {'UCB':>8} {'比例':>8} {'次数':>6}")
         print(f"  {'-'*55}")
         for i, name in enumerate(self.ARM_NAMES):

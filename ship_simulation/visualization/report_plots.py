@@ -1,4 +1,4 @@
-﻿"""ship 主线的论文风格图表输出。"""
+"""ship 主线的论文风格图表输出。"""
 
 from __future__ import annotations
 
@@ -1038,6 +1038,22 @@ def save_spatiotemporal_plot(
             vertices = np.asarray(obstacle.vertices, dtype=float)
             ax.plot(vertices[:, 0], vertices[:, 1], np.full(len(vertices), own.times[0]), color=cfg.obstacle_edgecolor, alpha=0.4)
             ax.plot(vertices[:, 0], vertices[:, 1], np.full(len(vertices), own.times[-1]), color=cfg.obstacle_edgecolor, alpha=0.4)
+    
+    isochrone_interval = 20.0
+    if len(scenario.target_ships) > 0 and len(own.times) > 1:
+        t_marks = np.arange(isochrone_interval, own.times[-1], isochrone_interval)
+        for t_mark in t_marks:
+            own_idx = min(np.searchsorted(own.times, t_mark), len(own.times) - 1)
+            own_pos = own.positions[own_idx]
+            own_t = own.times[own_idx]
+            for target_idx, target in enumerate(scenario.target_ships):
+                traj = episode.result.target_trajectories[target_idx]
+                tgt_idx = min(np.searchsorted(traj.times, own_t), len(traj.times) - 1)
+                tgt_pos = traj.positions[tgt_idx]
+                tgt_t = traj.times[tgt_idx]
+                ax.plot([own_pos[0], tgt_pos[0]], [own_pos[1], tgt_pos[1]], [own_t, tgt_t], 
+                        color=cfg.circular_obstacle_legend_color, linestyle=":", alpha=0.4)
+    
     ax.set_title(f"{scenario.name}: spatiotemporal planning")
     ax.set_xlabel("X [m]")
     ax.set_ylabel("Y [m]")
@@ -1785,5 +1801,137 @@ def save_risk_bars(output_path: Path, scenario_names: Sequence[str], kemm_risk_t
         ax.set_xticklabels(scenario_names, rotation=10)
         ax.set_title(metric_names[metric_idx])
     axes[0].legend(loc="best", **_legend_kwargs(cfg))
+    fig.tight_layout()
+    _finalize_figure(fig, output_path, cfg)
+
+
+@_styled_plot
+def save_runtime_tradeoff(
+    output_path: Path,
+    scenario_name: str,
+    metrics_by_label: Mapping[str, Sequence[dict[str, float]]],
+    series_colors: Mapping[str, str] | None = None,
+    plot_config: ShipPlotConfig | None = None,
+) -> None:
+    _ensure_parent(output_path)
+    cfg = _resolve_plot_config(plot_config)
+    if not metrics_by_label:
+        return
+    fig, ax = plt.subplots(figsize=getattr(cfg, "runtime_tradeoff_figsize", (8.0, 6.0)))
+    for idx, (label, metrics) in enumerate(metrics_by_label.items()):
+        color = series_colors.get(label) if series_colors is not None else [cfg.own_ship_color, cfg.baseline_color, cfg.third_algo_color][idx % 3]
+        x_vals = [m.get("runtime", 0.0) for m in metrics]
+        # Use smoothness or control_effort if risk is absent
+        y_vals = [m.get("control_effort", 0.0) for m in metrics]
+        ax.scatter(x_vals, y_vals, color=color, label=label, alpha=0.7, s=cfg.style.scatter_size)
+    ax.set_title(f"{scenario_name}: Runtime vs Control Effort Tradeoff")
+    ax.set_xlabel("Runtime [s]")
+    ax.set_ylabel("Control Effort")
+    ax.grid(True, alpha=cfg.style.grid_alpha)
+    if series_colors:
+        ax.legend(loc="best", **_legend_kwargs(cfg))
+    fig.tight_layout()
+    _finalize_figure(fig, output_path, cfg)
+
+
+@_styled_plot
+def save_decision_space_projection(
+    output_path: Path,
+    scenario_name: str,
+    episode: PlanningEpisodeResult,
+    plot_config: ShipPlotConfig | None = None,
+) -> None:
+    _ensure_parent(output_path)
+    cfg = _resolve_plot_config(plot_config)
+    decisions = episode.pareto_decisions
+    objectives = episode.pareto_objectives
+    if decisions is None or len(decisions) == 0:
+        return
+    
+    decisions_2d = np.asarray(decisions, dtype=float)
+    title_suffix = ""
+    if decisions_2d.shape[1] > 2:
+        if decisions_2d.shape[0] <= 1:
+            decisions_2d = np.zeros((len(decisions_2d), 2))
+        else:
+            centered = decisions_2d - np.mean(decisions_2d, axis=0)
+            u, s, vh = np.linalg.svd(centered, full_matrices=False)
+            proj_dim = min(2, vh.shape[0])
+            decisions_2d = np.dot(centered, vh[:proj_dim, :].T)
+            if decisions_2d.shape[1] < 2:
+                decisions_2d = np.pad(decisions_2d, ((0, 0), (0, 2 - decisions_2d.shape[1])))
+        title_suffix = " (PCA)"
+
+    fig, ax = plt.subplots(figsize=getattr(cfg, "decision_projection_figsize", (7.5, 6.0)))
+    radius = np.linalg.norm(objectives, axis=1) if len(objectives) == len(decisions_2d) else np.ones(len(decisions_2d))
+    scatter = ax.scatter(
+        decisions_2d[:, 0],
+        decisions_2d[:, 1],
+        c=radius,
+        cmap=cfg.pareto_cmap,
+        s=cfg.style.scatter_size,
+        alpha=0.82,
+    )
+    ax.set_title(f"{scenario_name}: Decision Space Projection{title_suffix}")
+    ax.set_xlabel("Component 1")
+    ax.set_ylabel("Component 2")
+    ax.grid(True, alpha=cfg.style.grid_alpha)
+    fig.colorbar(scatter, ax=ax, label="Objective-space radius")
+    fig.tight_layout()
+    _finalize_figure(fig, output_path, cfg)
+@_styled_plot
+def save_operator_allocation_history(
+    output_path: Path,
+    scenario_name: str,
+    series: ExperimentSeries,
+    plot_config: ShipPlotConfig | None = None,
+) -> None:
+    """绘制 KEMM 算子分配比例随世代/时间步推移的面积堆叠图。"""
+    _ensure_parent(output_path)
+    cfg = _resolve_plot_config(plot_config)
+    
+    # 抽取所有世代的 proportions
+    ratios: list[list[float]] = []
+    labels = ["Memory", "Predict", "Transfer", "Reinit"]
+    colors = [cfg.style.categorical_colors[2], cfg.style.categorical_colors[1], cfg.style.categorical_colors[3], cfg.style.categorical_colors[7]]
+    
+    if not series.histories:
+        return
+        
+    for step_history in series.histories:
+        for gen_record in step_history:
+            if "ratio_memory" in gen_record:
+                ratios.append([
+                    gen_record["ratio_memory"],
+                    gen_record["ratio_predict"],
+                    gen_record["ratio_transfer"],
+                    gen_record["ratio_reinit"],
+                ])
+                
+    if not ratios:
+        return
+        
+    ratios_array = np.array(ratios).T  # (4, N)
+    x = np.arange(ratios_array.shape[1])
+    
+    fig, ax = plt.subplots(figsize=getattr(cfg, "runtime_tradeoff_figsize", (8, 5)))
+    
+    # Stackplot
+    ax.stackplot(x, ratios_array, labels=labels, colors=colors, alpha=0.85)
+    
+    ax.set_title(f"{scenario_name}: Contextual MAB Operator Allocation ({series.label})")
+    ax.set_xlabel("Evolution Timeline (Concatenated Generations)")
+    ax.set_ylabel("Operator Proportion")
+    ax.set_ylim(0, 1.0)
+    ax.margins(x=0)
+    
+    # Customize legend
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.15),
+        ncol=4,
+        **_legend_kwargs(cfg)
+    )
+    
     fig.tight_layout()
     _finalize_figure(fig, output_path, cfg)

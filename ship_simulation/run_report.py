@@ -1,4 +1,4 @@
-﻿"""批量运行 ship episode，并导出论文风格报告。"""
+"""批量运行 ship episode，并导出论文风格报告。"""
 
 from __future__ import annotations
 
@@ -42,10 +42,13 @@ from ship_simulation.visualization import (
     save_route_planning_panel,
     save_route_bundle_gallery,
     save_run_statistics_panel,
+    save_runtime_tradeoff,
+    save_decision_space_projection,
     save_safety_envelope_plot,
     save_scenario_gallery,
     save_spatiotemporal_plot,
     save_summary_dashboard,
+    save_operator_allocation_history,
 )
 
 
@@ -474,6 +477,27 @@ def _render_dashboard(context: ScenarioFigureContext, output_path: Path, plot_co
     )
 
 
+def _render_runtime_tradeoff(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    series_colors = {series.label: series.color for series in context.best_series}
+    save_runtime_tradeoff(
+        output_path, 
+        context.scenario.name, 
+        context.metrics_by_label, 
+        series_colors=series_colors, 
+        plot_config=plot_config
+    )
+
+
+def _render_decision_projection(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    save_decision_space_projection(output_path, context.scenario.name, context.best_series[0].episode, plot_config=plot_config)
+
+
+def _render_operator_allocation(context: ScenarioFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
+    kemm_series = next((s for s in context.best_series if s.label == "KEMM"), None)
+    if kemm_series:
+        save_operator_allocation_history(output_path, context.scenario.name, kemm_series, plot_config=plot_config)
+
+
 def _render_scenario_gallery(context: GlobalFigureContext, output_path: Path, plot_config: ShipPlotConfig) -> None:
     save_scenario_gallery(output_path, context.scenario_map, plot_config=plot_config)
 
@@ -509,6 +533,9 @@ SCENARIO_FIGURE_SPECS = (
     ScenarioFigureSpec("distribution", "分布 violin 图", "_render_distribution"),
     ScenarioFigureSpec("run_statistics", "重复运行统计图", "_render_run_statistics"),
     ScenarioFigureSpec("dashboard", "摘要 dashboard", "_render_dashboard"),
+    ScenarioFigureSpec("runtime_tradeoff", "求解时间与控制能耗折中图", "_render_runtime_tradeoff"),
+    ScenarioFigureSpec("decision_projection", "决策空间PCA聚类视图", "_render_decision_projection"),
+    ScenarioFigureSpec("operator_allocation", "Contextual MAB 算子动态演化堆叠图", "_render_operator_allocation"),
 )
 
 

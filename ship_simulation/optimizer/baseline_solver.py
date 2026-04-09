@@ -1,4 +1,4 @@
-﻿"""ship 主线的 NSGA-II 风格基线优化器。"""
+"""ship 主线的 NSGA-II 风格基线优化器。"""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ class ShipNSGAStyleOptimizer:
         fronts = self._fast_nondominated_sort(fitness)
         pareto_idx = np.asarray(fronts[0], dtype=int)
         pareto_decisions = population[pareto_idx].copy()
-        pareto_objectives = fitness[pareto_idx].copy()
+        pareto_objectives = fitness[pareto_idx, :3].copy()
         best_decision, best_evaluation = self._select_representative_solution(pareto_decisions, pareto_objectives)
         return EvolutionaryOptimizationResult(
             best_decision=best_decision,
@@ -107,8 +107,14 @@ class ShipNSGAStyleOptimizer:
         selected = np.asarray(selected_indices, dtype=int)
         return population[selected], fitness[selected]
 
-    def _dominates(self, a: np.ndarray, b: np.ndarray) -> bool:
-        return np.all(a <= b) and np.any(a < b)
+    def _dominates(self, p: np.ndarray, q: np.ndarray) -> bool:
+        if len(p) > 3:
+            p_obj, p_cv, q_obj, q_cv = p[:3], sum(p[3:]), q[:3], sum(q[3:])
+            if p_cv < q_cv: return True
+            if p_cv > q_cv: return False
+            if abs(p_cv - q_cv) < 1e-9:
+                return np.all(p_obj <= q_obj) and np.any(p_obj < q_obj)
+        return np.all(p <= q) and np.any(p < q)
 
     def _fast_nondominated_sort(self, fitness: np.ndarray) -> list[list[int]]:
         dominates = [set() for _ in range(len(fitness))]
@@ -143,7 +149,7 @@ class ShipNSGAStyleOptimizer:
         if len(front_fitness) <= 2:
             return np.full(len(front_fitness), np.inf, dtype=float)
         distances = np.zeros(len(front_fitness), dtype=float)
-        for obj in range(front_fitness.shape[1]):
+        for obj in range(min(3, front_fitness.shape[1])):
             order = np.argsort(front_fitness[:, obj])
             distances[order[0]] = np.inf
             distances[order[-1]] = np.inf
@@ -165,8 +171,9 @@ class ShipNSGAStyleOptimizer:
     def _pick_by_weighted_score(self, objectives: np.ndarray) -> int:
         if len(objectives) == 1:
             return 0
-        spread = np.ptp(objectives, axis=0)
-        normalized = (objectives - objectives.min(axis=0)) / (spread + 1e-9)
+        obj_only = objectives[:, :3]
+        spread = np.ptp(obj_only, axis=0)
+        normalized = (obj_only - obj_only.min(axis=0)) / (spread + 1e-9)
         weights = np.asarray(self.interface.config.objective_weights, dtype=float)
         weights = weights / np.sum(weights)
         return int(np.argmin(normalized @ weights))
@@ -182,7 +189,7 @@ class ShipNSGAStyleOptimizer:
         return decisions[chosen].copy(), evaluations[chosen]
 
     def _summarize_generation(self, fitness: np.ndarray, generation: int) -> Dict[str, float]:
-        mins = np.min(fitness, axis=0)
+        mins = np.min(fitness[:, :3], axis=0)
         weights = np.asarray(self.interface.config.objective_weights, dtype=float)
         weights = weights / max(float(np.sum(weights)), 1e-9)
         return {
@@ -190,5 +197,5 @@ class ShipNSGAStyleOptimizer:
             "best_fuel": float(mins[0]),
             "best_time": float(mins[1]),
             "best_risk": float(mins[2]),
-            "best_weighted_score": float(np.min(fitness @ weights)),
+            "best_weighted_score": float(np.min(fitness[:, :3] @ weights)),
         }

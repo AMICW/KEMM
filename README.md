@@ -1,4 +1,4 @@
-﻿# KEMM: Dynamic Multi-Objective Optimization + Ship Trajectory Simulation
+# KEMM: Dynamic Multi-Objective Optimization + Ship Trajectory Simulation
 
 一个面向研究工作的 Python 项目，统一维护两条主线：
 
@@ -13,13 +13,13 @@
 
 ## 1. 项目亮点
 
-- 双主线统一：benchmark 理论验证 + ship 物理语义验证
-- benchmark 主线已补齐论文风格 `MIGD` 主表、KEMM 四模块消融和更接近论文的 `MMTL`
-- KEMM 已拆成可维护结构：主流程、子模块、adapter、报告层明确分层
-- ship 主线已升级为滚动重规划 episode，而不是单次静态轨迹 demo
-- ship 场景已支持：静态障碍、动态交通体、环境标量场/矢量场、COLREG 角色标签
-- 图表系统支持统一论文风格配置，默认优先兼容 SciencePlots
-- 文档体系同时面向：GitHub 访客、新开发者、新 AI 助手、论文写作
+- **约束支配排序 (CDNSGA - Constrained Domination)**：原生融合 Deb 的可行性规则 (Feasibility Rules)，将碰撞和边界惩罚彻底解耦至独立的约束标量 (CV)，极大保护了目标空间帕累托前沿的纯粹性，满足顶刊对物理语义优化的严格要求。
+- **纯粹的上下文多臂老虎机 (Contextual MAB - UCB1)**：摒弃传统魔法参调控，基于环境漂移强度 (`change_magnitude`) 构建多状态桶 Contextual Bandits，完全通过统计学 UCB 自治收敛算子最佳分配策略。
+- **双主线统一**：benchmark 理论验证 + ship 物理语义滚动验证。
+- **benchmark 主线**：已补齐 `MIGD` 主表、四大核心自适应进化模块 (Memory/Predict/Transfer/Reinit) 消融与兼容比较。
+- **ship 仿真主线**：集成滚动避碰重规划 (Episodes)，涵盖单/多船相遇、静态岛礁/高密障碍物受限区、COLREG规则与任意动态环境矢量场。
+- **极其严苛的模块解耦与出图**：报告层、算法内核明确剥离。内置基于 SciencePlots/IEEE 的多场景三维、时序、流场映射与解集轨迹的可视化和交互分析。
+- 文档体系同时面向：GitHub 访客、新开发者、新 AI 助手、论文写作 (涵盖详尽命令备忘与架构审视)。
 
 ---
 

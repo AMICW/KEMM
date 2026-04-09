@@ -1,4 +1,4 @@
-﻿"""benchmark 与 ship 主线共享的绘图配置层。"""
+"""benchmark 与 ship 主线共享的绘图配置层。"""
 
 from __future__ import annotations
 
@@ -110,6 +110,8 @@ SHIP_PLOT_PRESETS = {
         change_timeline_figsize=(10.6, 6.8),
         statistics_figsize=(12.0, 4.8),
         dashboard_figsize=(15.2, 11.2),
+        decision_projection_figsize=(7.5, 6.0),
+        runtime_tradeoff_figsize=(8.0, 6.0),
     ),
     "ieee": dict(overlay_figsize=(10.8, 6.5), snapshot_figsize=(12.0, 7.6), dashboard_figsize=(14.0, 10.2)),
     "nature": dict(overlay_figsize=(10.8, 6.5), snapshot_figsize=(12.0, 7.6), dashboard_figsize=(14.2, 10.2)),
@@ -201,6 +203,8 @@ class ShipPlotConfig:
     change_timeline_figsize: tuple[float, float] = (10.4, 6.8)
     statistics_figsize: tuple[float, float] = (11.4, 4.8)
     dashboard_figsize: tuple[float, float] = (15.0, 11.0)
+    decision_projection_figsize: tuple[float, float] = (7.5, 6.0)
+    runtime_tradeoff_figsize: tuple[float, float] = (8.0, 6.0)
     comparison_figsize: tuple[float, float] = (14.0, 4.8)
     time_series_figsize: tuple[float, float] = (8.8, 4.8)
     risk_threshold: float = 1.0

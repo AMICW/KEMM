@@ -1,4 +1,4 @@
-﻿"""将船舶场景封装为标准多目标优化问题。"""
+"""将船舶场景封装为标准多目标优化问题。"""
 
 from __future__ import annotations
 
@@ -136,20 +136,26 @@ class ShipTrajectoryProblem:
         terminal_fuel_penalty = terminal_distance * self.config.terminal_fuel_penalty_per_meter
         terminal_time_penalty = terminal_distance * self.config.terminal_time_penalty_per_meter
         terminal_risk_penalty = terminal_distance * self.config.terminal_risk_penalty_per_meter
-        fuel = self.fuel_model.integrate(own_trajectory) + terminal_fuel_penalty + bounds_penalty + 2.5 * safety_penalty
-        total_time = float(own_trajectory.times[-1] - own_trajectory.times[0]) + terminal_time_penalty + bounds_penalty + 0.25 * safety_penalty
-        collision_risk = (
+        fuel = float(self.fuel_model.integrate(own_trajectory))
+        total_time = float(own_trajectory.times[-1] - own_trajectory.times[0])
+        collision_risk = float(
             self.config.domain_risk_weight * float(risk.max_risk)
             + (1.0 - self.config.domain_risk_weight) * float(risk.mean_risk)
+        )
+        # 约束违背度(CV)
+        cv = (
+            bounds_penalty
+            + safety_penalty
+            + terminal_fuel_penalty
+            + terminal_time_penalty
             + terminal_risk_penalty
-            + bounds_penalty
-            + 0.025 * safety_penalty
             + self.config.intrusion_risk_penalty_per_second * float(risk.intrusion_time)
         )
         objectives = np.array([fuel, total_time, collision_risk], dtype=float)
         metrics = self._analysis_metrics(own_trajectory, risk)
         metrics["clearance_shortfall"] = clearance_shortfall
         metrics["hard_intrusion"] = hard_intrusion
+        metrics["cv"] = float(cv)
         return EvaluationResult(
             objectives=objectives,
             own_trajectory=own_trajectory,
@@ -188,10 +194,12 @@ class ShipTrajectoryProblem:
             cached = self._objective_cache.get(key)
             if cached is not None:
                 return cached.copy()
-        objectives = self.simulate(decision_vector).objectives
+        result = self.simulate(decision_vector)
+        # 为EA底层提供 [Objectives ..., CV]
+        eval_array = np.append(result.objectives, result.analysis_metrics.get("cv", 0.0))
         if self.config.population_evaluation_cache:
-            self._objective_cache[key] = objectives.copy()
-        return objectives
+            self._objective_cache[key] = eval_array.copy()
+        return eval_array
 
     def evaluate_population(self, population: np.ndarray) -> np.ndarray:
         pop = np.atleast_2d(np.asarray(population, dtype=float))

@@ -27,10 +27,24 @@ class BaseDMOEA:
         n = len(fitness)
         if n == 0:
             return []
-        F = fitness
+            
+        if fitness.shape[1] > self.n_obj:
+            F = fitness[:, :self.n_obj]
+            cv = fitness[:, self.n_obj:]
+            cv_sum = np.sum(cv, axis=1)
+        else:
+            F = fitness
+            cv_sum = np.zeros(n)
+
         leq = F[:, None, :] <= F[None, :, :]
         lt = F[:, None, :] < F[None, :, :]
-        dom_matrix = np.all(leq, axis=2) & np.any(lt, axis=2)
+        obj_dom = np.all(leq, axis=2) & np.any(lt, axis=2)
+        
+        cv_less = cv_sum[:, None] < cv_sum[None, :]
+        cv_eq = np.abs(cv_sum[:, None] - cv_sum[None, :]) < 1e-9
+        
+        dom_matrix = cv_less | (cv_eq & obj_dom)
+        
         dom_count = dom_matrix.sum(axis=0).astype(int)
         fronts = []
         remaining = np.ones(n, dtype=bool)
@@ -49,7 +63,7 @@ class BaseDMOEA:
         n = len(front)
         if n <= 2:
             return np.full(n, np.inf)
-        f = fitness[front]
+        f = fitness[front, :self.n_obj]
         dist = np.zeros(n)
         for m in range(f.shape[1]):
             order = np.argsort(f[:, m])

@@ -10,6 +10,9 @@
 4. KEMM 的每个子模块在代码里如何协同
 5. 哪些部分是标准公式，哪些部分是工程启发式或 benchmark-aware 增强
 
+如果你只是想快速知道“改哪里”，先看 [ai_developer_handoff.md](ai_developer_handoff.md)。
+如果你要核对公式与实现一致性，再配合 [formula_audit.md](formula_audit.md) 一起看。
+
 ---
 
 ## 1. 主线定位

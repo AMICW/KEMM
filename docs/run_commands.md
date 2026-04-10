@@ -2,8 +2,14 @@
 
 这份文档是仓库的中文运行速查表。
 
-如果你忘了 benchmark 或 ship 物理仿真应该怎么跑，优先看这里；
-如果你需要更完整的英文版说明，再看 `docs/how_to_run.md`。
+适合下面两类场景：
+
+- 你已经装好环境，只是想快速找到当前主线命令
+- 你在 Windows / PowerShell 环境下频繁做 benchmark 和 ship 回归
+
+如果你还没装环境，先看 [environment_setup.md](environment_setup.md)。
+如果你需要英文版命令说明，转到 [how_to_run.md](how_to_run.md)。
+如果你想看整个文档地图，转到 [README.md](README.md)。
 
 ## 1. 真实入口
 

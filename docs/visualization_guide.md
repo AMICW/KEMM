@@ -2,6 +2,12 @@
 
 本文档说明 benchmark 与 ship 两条主线如何共用同一套论文风格配置，并解释当前 ship 图包的组织方式。
 
+建议把这份文档当成“如何调图”的手册：
+
+- 想知道命令怎么跑，去看 [run_commands.md](run_commands.md) 或 [how_to_run.md](how_to_run.md)
+- 想知道每张图表达什么、图注怎么写，去看 [figure_catalog.md](figure_catalog.md)
+- 想先看整个文档地图，去看 [README.md](README.md)
+
 职责边界：
 
 - `README.md` 负责总入口

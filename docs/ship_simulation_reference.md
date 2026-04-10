@@ -8,6 +8,9 @@
 
 当前 ship 主线已经从“单次黑盒轨迹 demo”升级为“偏现实场景 + 滚动重规划 + 论文级图包”的实验系统。
 
+如果你只是想看运行命令，优先转到 [run_commands.md](run_commands.md) 或 [how_to_run.md](how_to_run.md)。
+如果你想知道 ship 实验应该怎么设计，再配合 [ship_experiment_playbook.md](ship_experiment_playbook.md) 一起看。
+
 ---
 
 ## 1. 子系统定位

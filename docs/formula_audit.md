@@ -6,6 +6,13 @@
 2. 工程启发式实现，但自洽且可运行
 3. 当前已发现的不一致、边界条件或仍需继续审查的地方
 
+如果你要先理解 KEMM 主线的整体结构，建议先看：
+
+- [kemm_reference.md](kemm_reference.md)
+- [ship_simulation_reference.md](ship_simulation_reference.md)
+
+这份文档更适合在写论文、做公式核对或准备答辩时使用。
+
 ---
 
 ## 1. 总体结论

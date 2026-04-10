@@ -2,6 +2,14 @@
 
 本文档只回答一个问题：`ship_simulation` 现在应该怎么设计实验，才能和 KEMM 的机制对得上。
 
+它更偏“实验设计与解释”，不是运行命令手册。
+
+如果你需要：
+
+- 命令速查：看 [run_commands.md](run_commands.md) 或 [how_to_run.md](how_to_run.md)
+- ship 子系统结构说明：看 [ship_simulation_reference.md](ship_simulation_reference.md)
+- 整体文档导航：看 [README.md](README.md)
+
 ---
 
 ## 1. 当前主线定位

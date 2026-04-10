@@ -302,13 +302,14 @@ class CoreMathSmokeTests(unittest.TestCase):
     def test_selector_quality_update_rewards_higher_quality(self):
         selector = AdaptiveOperatorSelector()
         selector._prev_ratios = np.array([0.6, 0.2, 0.1, 0.1], dtype=float)
+        selector._prev_context = 0
         selector.update_with_quality(0.2)
-        before = selector.bandit.counts.copy()
+        before = selector.bandits[0].counts.copy()
         selector.update_with_quality(0.5)
-        after = selector.bandit.counts.copy()
+        after = selector.bandits[0].counts.copy()
 
         self.assertGreater(after[0], before[0])
-        self.assertGreater(selector.bandit.rewards_history[-1], 0.0)
+        self.assertGreater(selector.bandits[0].rewards_history[-1], 0.0)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,15 @@
 # How To Run
 
-This file is the command cheat sheet for the repository.
+This file is the English command cheat sheet for the repository.
 
-If you forget how to run benchmark experiments or ship physical simulations,
-start here.
+Use this file when:
+
+- you want a compact English reference for benchmark and ship commands
+- you already know the project structure and only need runnable entry points
+
+If you need installation help first, go to [environment_setup.md](environment_setup.md).
+If you prefer the Chinese quick-reference version, go to [run_commands.md](run_commands.md).
+If you want the full documentation map, go to [README.md](README.md).
 
 ## 1. Real Entry Points
 

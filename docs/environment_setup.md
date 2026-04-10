@@ -2,6 +2,17 @@
 
 本文档面向本仓库的实际运行环境搭建，适用于 benchmark 主线与 `ship_simulation` 主线。
 
+建议把它理解成“安装文档”，不是“命令总表”或“实验设计手册”。
+
+如果你已经装好环境，只是忘了命令怎么写，优先看：
+
+- [run_commands.md](run_commands.md)
+- [how_to_run.md](how_to_run.md)
+
+如果你想先建立文档地图，再决定往哪看，先回到：
+
+- [README.md](README.md)
+
 ## 1. Python 版本
 
 推荐使用：

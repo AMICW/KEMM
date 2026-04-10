@@ -12,6 +12,7 @@ import numpy as np
 from kemm.core.types import KEMMConfig as RuntimeKEMMConfig
 from reporting_config import PublicationStyle, ShipPlotConfig, interactive_bundle_path
 from ship_simulation.config import DemoConfig, KEMMConfig, apply_experiment_profile, build_default_config
+from ship_simulation.core.collision_risk import RiskBreakdown
 from ship_simulation.core.environment import GridScalarField, GridVectorField
 from ship_simulation.optimizer.episode import PlanningEpisodeResult, PlanningStepResult, RollingHorizonPlanner
 from ship_simulation.optimizer.interface import ShipOptimizerInterface
@@ -138,7 +139,7 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         obj_func = self.interface.make_objective_function(context)
         pop = np.vstack([context.initial_guess, context.initial_guess])
         values = obj_func(pop, 0.0)
-        self.assertEqual(values.shape, (2, 3))
+        self.assertEqual(values.shape, (2, 4))
 
     def test_small_kemm_run_reaches_goal(self):
         demo = DemoConfig(
@@ -155,7 +156,7 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         )
         result = ShipKEMMOptimizer(self.interface, demo).optimize()
         self.assertEqual(result.population.shape[1], self.interface.build_context().n_var)
-        self.assertEqual(result.fitness.shape[1], 3)
+        self.assertEqual(result.fitness.shape[1], 4)
         self.assertTrue(result.best_evaluation.reached_goal)
 
     def test_ship_kemm_reuses_persistent_algorithm_across_replans(self):
@@ -166,6 +167,7 @@ class ShipSimulationSmokeTests(unittest.TestCase):
                 generations=3,
                 seed=9,
                 use_change_response=True,
+                reuse_solver_state_across_replans=True,
                 inject_initial_guess=True,
                 initial_guess_copies=3,
                 initial_guess_jitter_ratio=0.02,
@@ -188,6 +190,88 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         self.assertGreaterEqual(len(solver._algo.change_diagnostics_history), 1)
         self.assertEqual(solver._algo.last_change_diagnostics.time_step, 1)
         self.assertEqual(second.population.shape[1], shifted_interface.build_context().n_var)
+
+    def test_ship_kemm_resets_algorithm_state_between_replans_by_default(self):
+        demo = DemoConfig(
+            optimizer_name="kemm",
+            kemm=KEMMConfig(
+                pop_size=16,
+                generations=3,
+                seed=9,
+                use_change_response=True,
+                inject_initial_guess=True,
+                initial_guess_copies=3,
+                initial_guess_jitter_ratio=0.02,
+            ),
+        )
+        solver = ShipKEMMOptimizer(self.interface, demo)
+        solver.optimize(change_time=0.0)
+        first_algo_id = id(solver._algo)
+
+        shifted_scenario = self.scenario.with_updated_states(
+            replace(self.scenario.own_ship.initial_state, x=self.scenario.own_ship.initial_state.x + 120.0),
+            [replace(target.initial_state) for target in self.scenario.target_ships],
+            name_suffix="[shifted]",
+        )
+        shifted_interface = ShipOptimizerInterface(shifted_scenario, self.config)
+        solver.optimize(interface=shifted_interface, change_time=180.0)
+
+        self.assertEqual(solver._solve_count, 1)
+        self.assertIsNone(solver._algo.last_change_diagnostics)
+
+    def test_simulate_uses_evaluation_cache_for_repeated_decisions(self):
+        problem = self.interface.problem
+        decision = problem.initial_guess()
+        with patch.object(problem.own_ship_model, "simulate_route", wraps=problem.own_ship_model.simulate_route) as own_wrap:
+            with patch.object(problem.target_ship_model, "simulate_constant_velocity", wraps=problem.target_ship_model.simulate_constant_velocity) as target_wrap:
+                first = problem.simulate(decision)
+                second = problem.simulate(decision)
+        self.assertEqual(own_wrap.call_count, 1)
+        self.assertEqual(target_wrap.call_count, 0)
+        np.testing.assert_allclose(first.objectives, second.objectives)
+
+    def test_local_scoring_penalizes_clearance_shortfall_in_objectives(self):
+        problem = self.interface.problem
+        base = problem.simulate(problem.initial_guess())
+        sample_count = len(base.own_trajectory.times)
+
+        def make_risk(min_clearance: float) -> RiskBreakdown:
+            risk_series = np.full(sample_count, 0.08, dtype=float)
+            clearance_series = np.full(sample_count, min_clearance, dtype=float)
+            ship_distance_series = np.full(sample_count, max(min_clearance, 220.0), dtype=float)
+            dcpa_series = np.full(sample_count, 150.0, dtype=float)
+            tcpa_series = np.full(sample_count, 45.0, dtype=float)
+            zeros = np.zeros(sample_count, dtype=float)
+            return RiskBreakdown(
+                max_risk=0.12,
+                mean_risk=0.08,
+                intrusion_time=0.0,
+                min_clearance=min_clearance,
+                min_dcpa=150.0,
+                min_tcpa=45.0,
+                min_static_clearance=min_clearance,
+                min_ship_distance=float(ship_distance_series.min()),
+                risk_series=risk_series,
+                domain_risk_series=risk_series.copy(),
+                dcpa_risk_series=zeros.copy(),
+                obstacle_risk_series=zeros.copy(),
+                environment_risk_series=zeros.copy(),
+                clearance_series=clearance_series,
+                static_clearance_series=clearance_series.copy(),
+                ship_distance_series=ship_distance_series,
+                dcpa_series=dcpa_series,
+                tcpa_series=tcpa_series,
+                colreg_scale_series=np.ones(sample_count, dtype=float),
+            )
+
+        with patch.object(problem.risk_model, "evaluate", return_value=make_risk(240.0)):
+            safe = problem.score_trajectory_bundle(base.own_trajectory, base.target_trajectories)
+        with patch.object(problem.risk_model, "evaluate", return_value=make_risk(40.0)):
+            unsafe = problem.score_trajectory_bundle(base.own_trajectory, base.target_trajectories)
+
+        self.assertGreater(unsafe.objectives[0], safe.objectives[0])
+        self.assertGreater(unsafe.objectives[1], safe.objectives[1])
+        self.assertGreater(unsafe.objectives[2], safe.objectives[2])
 
     def test_ship_kemm_runtime_config_is_forwarded_to_algorithm(self):
         demo = DemoConfig(
@@ -727,7 +811,7 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         population = np.vstack([problem.initial_guess(), problem.initial_guess(), problem.initial_guess()])
         with patch.object(problem, "simulate", wraps=problem.simulate) as wrapped:
             values = problem.evaluate_population(population)
-        self.assertEqual(values.shape, (3, 3))
+        self.assertEqual(values.shape, (3, 4))
         self.assertEqual(wrapped.call_count, 1)
 
 

@@ -404,33 +404,18 @@ class RollingHorizonPlanner:
         scoring_problem = ShipTrajectoryProblem(self.scenario, self.config)
         merged_risk = _merge_risk_segments(risk_segments, dt=self.dt)
         terminal_distance = float(merged_own.terminal_distance)
-        clearance = float(merged_risk.min_clearance)
-        if np.isfinite(clearance):
-            clearance_shortfall = max(0.0, self.config.safety_clearance - clearance)
-            hard_intrusion = max(0.0, -clearance)
-        else:
-            clearance_shortfall = 0.0
-            hard_intrusion = 0.0
-        safety_penalty = (
-            self.config.soft_clearance_penalty_per_meter * clearance_shortfall
-            + self.config.hard_clearance_penalty_per_meter * hard_intrusion
+        fuel = float(scoring_problem.fuel_model.integrate(merged_own))
+        total_time = float(merged_own.times[-1] - merged_own.times[0])
+        objectives, penalties = scoring_problem.compose_objectives(
+            fuel=fuel,
+            total_time=total_time,
+            risk=merged_risk,
+            terminal_distance=terminal_distance,
         )
-        terminal_fuel_penalty = terminal_distance * self.config.terminal_fuel_penalty_per_meter
-        terminal_time_penalty = terminal_distance * self.config.terminal_time_penalty_per_meter
-        terminal_risk_penalty = terminal_distance * self.config.terminal_risk_penalty_per_meter
-        fuel = scoring_problem.fuel_model.integrate(merged_own) + terminal_fuel_penalty + 2.5 * safety_penalty
-        total_time = float(merged_own.times[-1] - merged_own.times[0]) + terminal_time_penalty + 0.25 * safety_penalty
-        collision_risk = (
-            self.config.domain_risk_weight * float(merged_risk.max_risk)
-            + (1.0 - self.config.domain_risk_weight) * float(merged_risk.mean_risk)
-            + terminal_risk_penalty
-            + 0.025 * safety_penalty
-            + self.config.intrusion_risk_penalty_per_second * float(merged_risk.intrusion_time)
-        )
-        objectives = np.array([fuel, total_time, collision_risk], dtype=float)
         metrics = scoring_problem._analysis_metrics(merged_own, merged_risk)
-        metrics["clearance_shortfall"] = clearance_shortfall
-        metrics["hard_intrusion"] = hard_intrusion
+        metrics["clearance_shortfall"] = penalties["clearance_shortfall"]
+        metrics["hard_intrusion"] = penalties["hard_intrusion"]
+        metrics["cv"] = penalties["cv"]
         final_evaluation = EvaluationResult(
             objectives=objectives,
             own_trajectory=merged_own,

@@ -28,6 +28,57 @@ class EvaluationResult:
     analysis_metrics: dict[str, float] = field(default_factory=dict)
 
 
+def _copy_trajectory(traj: Trajectory) -> Trajectory:
+    return Trajectory(
+        times=traj.times.copy(),
+        positions=traj.positions.copy(),
+        headings=traj.headings.copy(),
+        speeds=traj.speeds.copy(),
+        yaw_rates=traj.yaw_rates.copy(),
+        commanded_yaw_rates=traj.commanded_yaw_rates.copy(),
+        drift_vectors=traj.drift_vectors.copy(),
+        waypoint_indices=traj.waypoint_indices.copy(),
+        reached_goal=bool(traj.reached_goal),
+        terminal_distance=float(traj.terminal_distance),
+    )
+
+
+def _copy_risk_breakdown(risk: RiskBreakdown) -> RiskBreakdown:
+    return RiskBreakdown(
+        max_risk=float(risk.max_risk),
+        mean_risk=float(risk.mean_risk),
+        intrusion_time=float(risk.intrusion_time),
+        min_clearance=float(risk.min_clearance),
+        min_dcpa=float(risk.min_dcpa),
+        min_tcpa=float(risk.min_tcpa),
+        min_static_clearance=float(risk.min_static_clearance),
+        min_ship_distance=float(risk.min_ship_distance),
+        risk_series=risk.risk_series.copy(),
+        domain_risk_series=risk.domain_risk_series.copy(),
+        dcpa_risk_series=risk.dcpa_risk_series.copy(),
+        obstacle_risk_series=risk.obstacle_risk_series.copy(),
+        environment_risk_series=risk.environment_risk_series.copy(),
+        clearance_series=risk.clearance_series.copy(),
+        static_clearance_series=risk.static_clearance_series.copy(),
+        ship_distance_series=risk.ship_distance_series.copy(),
+        dcpa_series=risk.dcpa_series.copy(),
+        tcpa_series=risk.tcpa_series.copy(),
+        colreg_scale_series=risk.colreg_scale_series.copy(),
+    )
+
+
+def _copy_evaluation_result(result: EvaluationResult) -> EvaluationResult:
+    return EvaluationResult(
+        objectives=result.objectives.copy(),
+        own_trajectory=_copy_trajectory(result.own_trajectory),
+        target_trajectories=[_copy_trajectory(traj) for traj in result.target_trajectories],
+        risk=_copy_risk_breakdown(result.risk),
+        reached_goal=bool(result.reached_goal),
+        terminal_distance=float(result.terminal_distance),
+        analysis_metrics=dict(result.analysis_metrics),
+    )
+
+
 class ShipTrajectoryProblem:
     """船舶多目标轨迹规划问题。"""
 
@@ -43,12 +94,17 @@ class ShipTrajectoryProblem:
         self.target_ship_model = NomotoShip(config.ship, config.simulation, self.environment)
         self.risk_model = ShipDomainRiskModel(config.ship, config.domain, config)
         self.fuel_model = FuelConsumptionModel(config.environment)
+        self._target_trajectories = [
+            self.target_ship_model.simulate_constant_velocity(target.initial_state)
+            for target in self.scenario.target_ships
+        ]
 
         self.n_waypoints = config.num_intermediate_waypoints
         self.n_var = self.n_waypoints * 3
         self.n_obj = 3
         self.var_bounds = self._build_bounds()
         self._objective_cache: dict[bytes, np.ndarray] = {}
+        self._evaluation_cache: dict[bytes, EvaluationResult] = {}
 
     def _build_bounds(self) -> np.ndarray:
         xmin, xmax, ymin, ymax = self.scenario.area
@@ -104,6 +160,81 @@ class ShipTrajectoryProblem:
             "mean_environment_risk": float(np.mean(risk.environment_risk_series)) if risk.environment_risk_series.size else 0.0,
         }
 
+    def penalty_terms(
+        self,
+        risk: RiskBreakdown,
+        terminal_distance: float,
+        *,
+        bounds_penalty: float = 0.0,
+        terminal_penalty_scale: float = 1.0,
+    ) -> dict[str, float]:
+        clearance = float(risk.min_clearance)
+        if np.isfinite(clearance):
+            clearance_shortfall = max(0.0, self.config.safety_clearance - clearance)
+            hard_intrusion = max(0.0, -clearance)
+        else:
+            clearance_shortfall = 0.0
+            hard_intrusion = 0.0
+        safety_penalty = (
+            self.config.soft_clearance_penalty_per_meter * clearance_shortfall
+            + self.config.hard_clearance_penalty_per_meter * hard_intrusion
+        )
+        terminal_fuel_penalty = terminal_penalty_scale * terminal_distance * self.config.terminal_fuel_penalty_per_meter
+        terminal_time_penalty = terminal_penalty_scale * terminal_distance * self.config.terminal_time_penalty_per_meter
+        terminal_risk_penalty = terminal_penalty_scale * terminal_distance * self.config.terminal_risk_penalty_per_meter
+        intrusion_penalty = self.config.intrusion_risk_penalty_per_second * float(risk.intrusion_time)
+        cv = (
+            bounds_penalty
+            + safety_penalty
+            + terminal_fuel_penalty
+            + terminal_time_penalty
+            + terminal_risk_penalty
+            + intrusion_penalty
+        )
+        return {
+            "clearance_shortfall": float(clearance_shortfall),
+            "hard_intrusion": float(hard_intrusion),
+            "safety_penalty": float(safety_penalty),
+            "terminal_fuel_penalty": float(terminal_fuel_penalty),
+            "terminal_time_penalty": float(terminal_time_penalty),
+            "terminal_risk_penalty": float(terminal_risk_penalty),
+            "intrusion_penalty": float(intrusion_penalty),
+            "cv": float(cv),
+        }
+
+    def compose_objectives(
+        self,
+        *,
+        fuel: float,
+        total_time: float,
+        risk: RiskBreakdown,
+        terminal_distance: float,
+        bounds_penalty: float = 0.0,
+        terminal_penalty_scale: float = 1.0,
+    ) -> tuple[np.ndarray, dict[str, float]]:
+        penalties = self.penalty_terms(
+            risk,
+            terminal_distance,
+            bounds_penalty=bounds_penalty,
+            terminal_penalty_scale=terminal_penalty_scale,
+        )
+        collision_risk = float(
+            self.config.domain_risk_weight * float(risk.max_risk)
+            + (1.0 - self.config.domain_risk_weight) * float(risk.mean_risk)
+            + penalties["terminal_risk_penalty"]
+            + self.config.risk_safety_penalty_weight * penalties["safety_penalty"]
+            + penalties["intrusion_penalty"]
+        )
+        objectives = np.array(
+            [
+                float(fuel) + penalties["terminal_fuel_penalty"] + self.config.fuel_safety_penalty_weight * penalties["safety_penalty"],
+                float(total_time) + penalties["terminal_time_penalty"] + self.config.time_safety_penalty_weight * penalties["safety_penalty"],
+                collision_risk,
+            ],
+            dtype=float,
+        )
+        return objectives, penalties
+
     def score_trajectory_bundle(
         self,
         own_trajectory: Trajectory,
@@ -122,40 +253,20 @@ class ShipTrajectoryProblem:
             target_names=[target.name for target in self.scenario.target_ships],
         )
         terminal_distance = float(own_trajectory.terminal_distance)
-        clearance = float(risk.min_clearance)
-        if np.isfinite(clearance):
-            clearance_shortfall = max(0.0, self.config.safety_clearance - clearance)
-            hard_intrusion = max(0.0, -clearance)
-        else:
-            clearance_shortfall = 0.0
-            hard_intrusion = 0.0
-        safety_penalty = (
-            self.config.soft_clearance_penalty_per_meter * clearance_shortfall
-            + self.config.hard_clearance_penalty_per_meter * hard_intrusion
-        )
-        terminal_fuel_penalty = terminal_distance * self.config.terminal_fuel_penalty_per_meter
-        terminal_time_penalty = terminal_distance * self.config.terminal_time_penalty_per_meter
-        terminal_risk_penalty = terminal_distance * self.config.terminal_risk_penalty_per_meter
         fuel = float(self.fuel_model.integrate(own_trajectory))
         total_time = float(own_trajectory.times[-1] - own_trajectory.times[0])
-        collision_risk = float(
-            self.config.domain_risk_weight * float(risk.max_risk)
-            + (1.0 - self.config.domain_risk_weight) * float(risk.mean_risk)
+        objectives, penalties = self.compose_objectives(
+            fuel=fuel,
+            total_time=total_time,
+            risk=risk,
+            terminal_distance=terminal_distance,
+            bounds_penalty=bounds_penalty,
+            terminal_penalty_scale=self.config.local_terminal_penalty_scale,
         )
-        # 约束违背度(CV)
-        cv = (
-            bounds_penalty
-            + safety_penalty
-            + terminal_fuel_penalty
-            + terminal_time_penalty
-            + terminal_risk_penalty
-            + self.config.intrusion_risk_penalty_per_second * float(risk.intrusion_time)
-        )
-        objectives = np.array([fuel, total_time, collision_risk], dtype=float)
         metrics = self._analysis_metrics(own_trajectory, risk)
-        metrics["clearance_shortfall"] = clearance_shortfall
-        metrics["hard_intrusion"] = hard_intrusion
-        metrics["cv"] = float(cv)
+        metrics["clearance_shortfall"] = penalties["clearance_shortfall"]
+        metrics["hard_intrusion"] = penalties["hard_intrusion"]
+        metrics["cv"] = penalties["cv"]
         return EvaluationResult(
             objectives=objectives,
             own_trajectory=own_trajectory,
@@ -170,17 +281,23 @@ class ShipTrajectoryProblem:
         vector = np.asarray(decision_vector, dtype=float)
         clipped = np.clip(vector, self.var_bounds[:, 0], self.var_bounds[:, 1])
         bounds_penalty = float(np.linalg.norm(vector - clipped, ord=1) * self.config.penalty_out_of_bounds)
+        cache_key = self._cache_key(clipped)
+        if self.config.population_evaluation_cache:
+            cached = self._evaluation_cache.get(cache_key)
+            if cached is not None:
+                return _copy_evaluation_result(cached)
         waypoints, speeds = self.decode(clipped)
         own_trajectory = self.own_ship_model.simulate_route(
             initial_state=self.scenario.own_ship.initial_state,
             waypoints=waypoints,
             segment_speeds=speeds,
         )
-        target_trajectories = [
-            self.target_ship_model.simulate_constant_velocity(target.initial_state)
-            for target in self.scenario.target_ships
-        ]
-        return self.score_trajectory_bundle(own_trajectory, target_trajectories, bounds_penalty=bounds_penalty)
+        target_trajectories = self._target_trajectories
+        result = self.score_trajectory_bundle(own_trajectory, target_trajectories, bounds_penalty=bounds_penalty)
+        if self.config.population_evaluation_cache:
+            self._evaluation_cache[cache_key] = _copy_evaluation_result(result)
+            self._objective_cache[cache_key] = np.append(result.objectives, result.analysis_metrics.get("cv", 0.0)).copy()
+        return result
 
     def _cache_key(self, decision_vector: Sequence[float]) -> bytes:
         clipped = np.clip(np.asarray(decision_vector, dtype=float), self.var_bounds[:, 0], self.var_bounds[:, 1])

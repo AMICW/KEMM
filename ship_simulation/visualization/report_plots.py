@@ -1893,7 +1893,19 @@ def save_operator_allocation_history(
     # 抽取所有世代的 proportions
     ratios: list[list[float]] = []
     labels = ["Memory", "Predict", "Transfer", "Reinit"]
-    colors = [cfg.style.categorical_colors[2], cfg.style.categorical_colors[1], cfg.style.categorical_colors[3], cfg.style.categorical_colors[7]]
+    palette = tuple(
+        getattr(
+            cfg.style,
+            "categorical_colors",
+            (
+                cfg.own_ship_color,
+                cfg.baseline_color,
+                cfg.third_algo_color,
+                cfg.command_color,
+            ),
+        )
+    )
+    colors = [palette[index % len(palette)] for index in (2, 1, 3, 7)]
     
     if not series.histories:
         return

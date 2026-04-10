@@ -161,8 +161,12 @@ class ProblemConfig:
     terminal_fuel_penalty_per_meter: float = 2.0
     terminal_time_penalty_per_meter: float = 0.18
     terminal_risk_penalty_per_meter: float = 0.002
+    local_terminal_penalty_scale: float = 0.25
     soft_clearance_penalty_per_meter: float = 2.0
     hard_clearance_penalty_per_meter: float = 16.0
+    fuel_safety_penalty_weight: float = 2.5
+    time_safety_penalty_weight: float = 0.25
+    risk_safety_penalty_weight: float = 0.025
     intrusion_risk_penalty_per_second: float = 0.02
     domain_risk_weight: float = 0.55
     dcpa_risk_weight: float = 0.2
@@ -184,14 +188,15 @@ class ProblemConfig:
 class KEMMConfig:
     """ship 主线使用的 KEMM 运行参数。"""
 
-    pop_size: int = 48
-    generations: int = 24
+    pop_size: int = 30
+    generations: int = 14
     refresh_interval: int = 8
     seed: int = 42
     inject_initial_guess: bool = True
     initial_guess_copies: int = 4
     initial_guess_jitter_ratio: float = 0.04
     use_change_response: bool = True
+    reuse_solver_state_across_replans: bool = False
     runtime: RuntimeKEMMConfig = field(default_factory=lambda: RuntimeKEMMConfig(benchmark_aware_prior=False))
 
 

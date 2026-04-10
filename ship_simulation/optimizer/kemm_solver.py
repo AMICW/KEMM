@@ -46,6 +46,10 @@ class ShipKEMMOptimizer:
         self._internal_random_state = None
         self._solve_count = 0
 
+    def _clear_algorithm_state(self) -> None:
+        self._algo = None
+        self._solve_count = 0
+
     def optimize(
         self,
         interface: ShipOptimizerInterface | None = None,
@@ -59,6 +63,8 @@ class ShipKEMMOptimizer:
         if reset:
             self.reset()
         kemm_cfg = self.demo_config.kemm
+        if not reset and not kemm_cfg.reuse_solver_state_across_replans and self._solve_count > 0:
+            self._clear_algorithm_state()
         bounds = (
             self.context.var_bounds[:, 0].astype(float),
             self.context.var_bounds[:, 1].astype(float),
@@ -166,8 +172,14 @@ class ShipKEMMOptimizer:
         samples = self._initial_guess_samples(max(1, min(self.demo_config.kemm.initial_guess_copies, algo.pop_size // 4)))
         if samples is None or len(samples) == 0:
             return
+        if algo.fitness is None:
+            candidate_pop = np.vstack([algo.population, samples])
+            candidate_fit = algo.evaluate(candidate_pop, objective, change_time)
+            algo.population, algo.fitness = algo.env_selection(candidate_pop, candidate_fit, algo.pop_size)
+            return
         candidate_pop = np.vstack([algo.population, samples])
-        candidate_fit = algo.evaluate(candidate_pop, objective, change_time)
+        sample_fit = algo.evaluate(samples, objective, change_time)
+        candidate_fit = np.vstack([algo.fitness, sample_fit])
         algo.population, algo.fitness = algo.env_selection(candidate_pop, candidate_fit, algo.pop_size)
 
     def _summarize_generation(self, algo: KEMM_DMOEA_Improved, generation: int) -> Dict[str, float]:

@@ -69,6 +69,18 @@ class PublicationStyle:
     axes_facecolor: str = "#fcfcfd"
     grid_color: str = "#d0d7de"
     spine_color: str = "#9aa4b2"
+    categorical_colors: tuple[str, ...] = (
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+    )
 
 
 PLOT_STYLE_PRESETS = {

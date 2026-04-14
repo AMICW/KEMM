@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="817.92pt" height="396.936pt" viewBox="0 0 817.92 396.936" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-04-15T00:23:12.562039</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.7, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 396.936 
+L 817.92 396.936 
+L 817.92 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 66.66048 287.981424 
+L 171.11808 287.981424 
+Q 195.22368 287.981424 195.22368 276.505344 
+L 195.22368 108.189504 
+Q 195.22368 96.713424 171.11808 96.713424 
+L 66.66048 96.713424 
+Q 42.55488 96.713424 42.55488 108.189504 
+L 42.55488 276.505344 
+Q 42.55488 287.981424 66.66048 287.981424 
+z
+" clip-path="url(#p3c48194784)" style="fill: #dfe7f1; opacity: 0.35"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 259.50528 287.981424 
+L 363.96288 287.981424 
+Q 388.06848 287.981424 388.06848 276.505344 
+L 388.06848 108.189504 
+Q 388.06848 96.713424 363.96288 96.713424 
+L 259.50528 96.713424 
+Q 235.39968 96.713424 235.39968 108.189504 
+L 235.39968 276.505344 
+Q 235.39968 287.981424 259.50528 287.981424 
+z
+" clip-path="url(#p3c48194784)" style="fill: #dfe7f1; opacity: 0.35"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 452.35008 287.981424 
+L 556.80768 287.981424 
+Q 580.91328 287.981424 580.91328 276.505344 
+L 580.91328 108.189504 
+Q 580.91328 96.713424 556.80768 96.713424 
+L 452.35008 96.713424 
+Q 428.24448 96.713424 428.24448 108.189504 
+L 428.24448 276.505344 
+Q 428.24448 287.981424 452.35008 287.981424 
+z
+" clip-path="url(#p3c48194784)" style="fill: #dfe7f1; opacity: 0.35"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 645.19488 287.981424 
+L 749.65248 287.981424 
+Q 773.75808 287.981424 773.75808 276.505344 
+L 773.75808 108.189504 
+Q 773.75808 96.713424 749.65248 96.713424 
+L 645.19488 96.713424 
+Q 621.08928 96.713424 621.08928 108.189504 
+L 621.08928 276.505344 
+Q 621.08928 287.981424 645.19488 287.981424 
+z
+" clip-path="url(#p3c48194784)" style="fill: #dfe7f1; opacity: 0.35"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 185.972411 190.81728 
+Q 208.079092 190.81728 227.726099 190.81728 
+" clip-path="url(#p3c48194784)" style="fill: none; stroke: #4a78b8; stroke-width: 2.2; stroke-linecap: round"/>
+    <path d="M 224.526099 189.21728 
+L 227.726099 190.81728 
+L 224.526099 192.41728 
+z
+" clip-path="url(#p3c48194784)" style="fill: #4a78b8; stroke: #4a78b8; stroke-width: 2.2; stroke-linecap: round"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 378.817211 190.81728 
+Q 400.923892 190.81728 420.570899 190.81728 
+" clip-path="url(#p3c48194784)" style="fill: none; stroke: #4a78b8; stroke-width: 2.2; stroke-linecap: round"/>
+    <path d="M 417.370899 189.21728 
+L 420.570899 190.81728 
+L 417.370899 192.41728 
+z
+" clip-path="url(#p3c48194784)" style="fill: #4a78b8; stroke: #4a78b8; stroke-width: 2.2; stroke-linecap: round"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 571.662011 190.81728 
+Q 593.768692 190.81728 613.415699 190.81728 
+" clip-path="url(#p3c48194784)" style="fill: none; stroke: #4a78b8; stroke-width: 2.2; stroke-linecap: round"/>
+    <path d="M 610.215699 189.21728 
+L 613.415699 190.81728 
+L 610.215699 192.41728 
+z
+" clip-path="url(#p3c48194784)" style="fill: #4a78b8; stroke: #4a78b8; stroke-width: 2.2; stroke-linecap: round"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 171.11808 364.488624 
+L 653.23008 364.488624 
+Q 677.33568 364.488624 677.33568 353.012544 
+L 677.33568 330.060384 
+Q 677.33568 318.584304 653.23008 318.584304 
+L 171.11808 318.584304 
+Q 147.01248 318.584304 147.01248 330.060384 
+L 147.01248 353.012544 
+Q 147.01248 364.488624 171.11808 364.488624 
+z
+" clip-path="url(#p3c48194784)" style="fill: #dfe7f1; opacity: 0.35"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 696.38952 281.840587 
+Q 431.223973 168.964333 186.534664 319.303159 
+" clip-path="url(#p3c48194784)" style="fill: none; stroke-dasharray: 3.33,1.44; stroke-dashoffset: 0; stroke: #d7dee8; stroke-width: 0.9; stroke-linecap: round"/>
+    <path d="M 190.098749 318.991228 
+L 186.534664 319.303159 
+L 188.423571 316.264733 
+z
+" clip-path="url(#p3c48194784)" style="fill: #d7dee8; stroke-dasharray: 3.33,1.44; stroke-dashoffset: 0; stroke: #d7dee8; stroke-width: 0.9; stroke-linecap: round"/>
+   </g>
+   <g id="patch_11">
+    <path d="M 63.4464 286.45128 
+L 167.904 286.45128 
+Q 192.0096 286.45128 192.0096 274.9752 
+L 192.0096 106.65936 
+Q 192.0096 95.18328 167.904 95.18328 
+L 63.4464 95.18328 
+Q 39.3408 95.18328 39.3408 106.65936 
+L 39.3408 274.9752 
+Q 39.3408 286.45128 63.4464 286.45128 
+z
+" clip-path="url(#p3c48194784)" style="fill: #edf4ff; stroke: #475467; stroke-width: 1.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_12">
+    <path d="M 256.2912 286.45128 
+L 360.7488 286.45128 
+Q 384.8544 286.45128 384.8544 274.9752 
+L 384.8544 106.65936 
+Q 384.8544 95.18328 360.7488 95.18328 
+L 256.2912 95.18328 
+Q 232.1856 95.18328 232.1856 106.65936 
+L 232.1856 274.9752 
+Q 232.1856 286.45128 256.2912 286.45128 
+z
+" clip-path="url(#p3c48194784)" style="fill: #fff2e8; stroke: #475467; stroke-width: 1.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_13">
+    <path d="M 449.136 286.45128 
+L 553.5936 286.45128 
+Q 577.6992 286.45128 577.6992 274.9752 
+L 577.6992 106.65936 
+Q 577.6992 95.18328 553.5936 95.18328 
+L 449.136 95.18328 
+Q 425.0304 95.18328 425.0304 106.65936 
+L 425.0304 274.9752 
+Q 425.0304 286.45128 449.136 286.45128 
+z
+" clip-path="url(#p3c48194784)" style="fill: #fff7f0; stroke: #475467; stroke-width: 1.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_14">
+    <path d="M 641.9808 286.45128 
+L 746.4384 286.45128 
+Q 770.544 286.45128 770.544 274.9752 
+L 770.544 106.65936 
+Q 770.544 95.18328 746.4384 95.18328 
+L 641.9808 95.18328 
+Q 617.8752 95.18328 617.8752 106.65936 
+L 617.8752 274.9752 
+Q 617.8752 286.45128 641.9808 286.45128 
+z
+" clip-path="url(#p3c48194784)" style="fill: #eef9f1; stroke: #475467; stroke-width: 1.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_15">
+    <path d="M 167.904 362.95848 
+L 650.016 362.95848 
+Q 674.1216 362.95848 674.1216 351.4824 
+L 674.1216 328.53024 
+Q 674.1216 317.05416 650.016 317.05416 
+L 167.904 317.05416 
+Q 143.7984 317.05416 143.7984 328.53024 
+L 143.7984 351.4824 
+Q 143.7984 362.95848 167.904 362.95848 
+z
+" clip-path="url(#p3c48194784)" style="fill: #f4f8fe; stroke: #475467; stroke-linejoin: miter"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 18px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #1f2937" x="31.3056" y="40.71555" transform="rotate(-0 31.3056 40.71555)">KEMM 原理解释图：从变化感知到统一竞争</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 10.6px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #667085" x="31.3056" y="50.101615" transform="rotate(-0 31.3056 50.101615)">这张图面向论文和汇报，强调 KEMM 的核心不是固定算子，而是先诊断变化，再分配预算，再统一竞争筛选。</text>
+   </g>
+   <g id="text_3">
+    <text style="font-weight: 700; font-size: 13px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="115.6752" y="133.43688" transform="rotate(-0 115.6752 133.43688)">变化感知</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 10px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="115.6752" y="160.2144" transform="rotate(-0 115.6752 160.2144)">读取环境与前沿变化</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(84.4752 201.993552)">提取变化强度</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(94.8752 216.633502)">可迁移性</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(89.6752 231.273452)">预测可靠性</text>
+   </g>
+   <g id="text_6">
+    <text style="font-weight: 700; font-size: 13px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="308.52" y="133.43688" transform="rotate(-0 308.52 133.43688)">预算分配</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 10px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="308.52" y="160.2144" transform="rotate(-0 308.52 160.2144)">决定四类候选预算</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(266.92 201.96349)">根据诊断结果分配</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(256.918937 216.60344)">memory / prediction</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(271.299375 231.303515)">transfer / reinit</text>
+   </g>
+   <g id="text_9">
+    <text style="font-weight: 700; font-size: 13px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="501.3648" y="133.43688" transform="rotate(-0 501.3648 133.43688)">多源候选</text>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 10px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="501.3648" y="160.2144" transform="rotate(-0 501.3648 160.2144)">并行提名候选解</text>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(459.7648 201.993552)">四类机制分别给出</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(454.5648 216.633502)">知识复用或探索候选</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(464.9648 231.273452)">避免单策略失灵</text>
+   </g>
+   <g id="text_12">
+    <text style="font-weight: 700; font-size: 13px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="694.2096" y="133.43688" transform="rotate(-0 694.2096 133.43688)">统一竞争</text>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 10px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="694.2096" y="160.2144" transform="rotate(-0 694.2096 160.2144)">约束优先收束输出</text>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(657.8096 201.993552)">统一候选池比较</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(645.53435 216.633502)">可行性、Pareto 优势</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(652.6096 231.273452)">与多样性后再执行</text>
+   </g>
+   <g id="text_15">
+    <text style="font-size: 10.5px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="408.96" y="342.897922" transform="rotate(-0 408.96 342.897922)">闭环结果：输出代表轨迹并仅执行前段，环境更新后再次回到变化感知阶段。</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="408.96" y="382.08528" transform="rotate(-0 408.96 382.08528)">一句话理解：KEMM 通过“先判断变化类型，再决定怎么复用知识”的方式提升动态环境下的恢复速度与稳定性。</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p3c48194784">
+   <rect x="7.2" y="7.2" width="803.52" height="382.536"/>
+  </clipPath>
+ </defs>
+</svg>

@@ -39,28 +39,37 @@ class Theme:
     restricted: str
     current: str
     guide: str
+    shadow: str
+
+
+TITLE_FONT = 18.0
+SUBTITLE_FONT = 10.6
+BODY_FONT = 10.2
+CAPTION_FONT = 9.4
+BADGE_FONT = 7.8
 
 
 THEME_PAPER = Theme(
     name="paper",
     is_bw=False,
     background="#ffffff",
-    text="#182230",
-    muted_text="#4a5568",
-    border="#314153",
-    flow_fill="#f3f6fb",
-    module_fill="#e7eef7",
-    source_fill="#eef4ff",
-    candidate_fill="#fff4e6",
-    output_fill="#eaf7ef",
-    accent="#2f5da8",
-    secondary_accent="#8c4f1c",
-    risk="#c73e1d",
-    water="#f8fbff",
-    obstacle="#6b7280",
-    restricted="#9f1239",
-    current="#2563eb",
-    guide="#cbd5e1",
+    text="#1f2937",
+    muted_text="#667085",
+    border="#475467",
+    flow_fill="#f4f8fe",
+    module_fill="#fff2e8",
+    source_fill="#edf4ff",
+    candidate_fill="#fff7f0",
+    output_fill="#eef9f1",
+    accent="#4a78b8",
+    secondary_accent="#b07243",
+    risk="#c45b3c",
+    water="#fbfdff",
+    obstacle="#7b8794",
+    restricted="#a14d62",
+    current="#5b8def",
+    guide="#d7dee8",
+    shadow="#dfe7f1",
 )
 
 THEME_BW = Theme(
@@ -83,6 +92,7 @@ THEME_BW = Theme(
     restricted="#333333",
     current="#4d4d4d",
     guide="#bdbdbd",
+    shadow="#ededed",
 )
 
 
@@ -97,6 +107,8 @@ FIGURE_NAMES = {
     "fig07_crossing_scene": "图7 交叉会遇场景示意图",
     "fig08_harbor_clutter_scene": "图8 港口高密障碍场景示意图",
     "fig09_graphical_abstract": "论文专用 Graphical Abstract",
+    "fig10_kemm_principle_chain": "论文专用 KEMM 原理解释图",
+    "fig11_module_role_map": "论文专用 模块职责解释图",
 }
 
 
@@ -135,6 +147,7 @@ FIGURE_DOCS = {
             "并联机制模块 `140/150/160/170`",
             "候选池与选择模块 `180/190`，以及执行模块 `200`",
             "输出对象 `250/260/290` 和执行反馈回路",
+            "论文版默认隐藏构件号，专利黑白版保留构件号",
         ],
         "reading": [
             "从左到右读：先看环境数据进入 `100` 和 `110`，再看 `120/130` 如何触发多源知识机制。",
@@ -157,6 +170,7 @@ FIGURE_DOCS = {
             "从 `S500` 发散到 `S600/S700/S800` 的分支箭头",
             "`S900` 候选池、`S1000` 环境选择、`S1100` 滚动重规划",
             "从 `S1100` 返回 `S100` 的循环虚线",
+            "论文版默认隐藏步骤编号，专利黑白版保留步骤编号",
         ],
         "reading": [
             "先横向看上排：建立动态问题和环境变化信息。",
@@ -314,12 +328,62 @@ FIGURE_DOCS = {
         "usage": "仅用于论文、汇报或海报展示，不用于专利黑白附图。",
         "refs": ["../patent_abstract_ship_kemm_draft.md", "../figure_catalog.md"],
     },
+    "fig10_kemm_principle_chain": {
+        "summary": "该图是论文专用的算法原理解释图，用更强的阶段叙事解释 KEMM 的核心工作逻辑。",
+        "meaning": [
+            "第一阶段说明系统先从环境与前沿变化中感知“发生了什么变化”。",
+            "第二阶段说明系统不是固定配比，而是根据诊断结果分配四类候选预算。",
+            "第三阶段说明四类机制只负责提名候选，最终统一进入候选池。",
+            "第四阶段说明系统通过约束优先的竞争筛选，输出代表轨迹并进入下一轮滚动重规划。",
+        ],
+        "elements": [
+            "四阶段主链：变化感知、预算分配、多源候选、统一竞争",
+            "每阶段下方的简要解释语句",
+            "连接输出与下一规划周期的闭环箭头",
+        ],
+        "reading": [
+            "先从左到右看四个阶段，建立整体原理图景。",
+            "再看阶段下方短句，理解每一步解决的问题。",
+            "最后看底部闭环，理解算法为什么适用于动态环境。",
+        ],
+        "usage": "适合作为论文方法章节里的“原理总览图”，也适合老师汇报和答辩时先讲思路再讲实现。",
+        "refs": ["../patent_specification_ship_kemm_draft.md", "../kemm_reference.md"],
+    },
+    "fig11_module_role_map": {
+        "summary": "该图是论文专用的模块职责解释图，用于解释 memory、prediction、transfer、reinit 各自在什么变化情形下发挥作用。",
+        "meaning": [
+            "把四个模块按“适用变化类型”和“主要作用”拆开，而不是只画成并列功能块。",
+            "帮助读者理解四模块不是简单堆叠，而是分别对应重复场景、平滑漂移、结构迁移和大幅扰动。",
+            "右侧总结框强调协同逻辑：四模块负责提名候选，最终仍然回到统一竞争。",
+        ],
+        "elements": [
+            "四张模块卡片：memory / prediction / transfer / reinit",
+            "每张卡片中的适用条件、核心动作和典型收益",
+            "右侧协同总结框",
+        ],
+        "reading": [
+            "逐张看四个模块卡片，先理解各自解决什么问题。",
+            "再看右侧总结框，理解为什么它们最终会被统一候选池收束。",
+            "把这张图和图4配合使用，可以同时解释模块职责和系统协同。",
+        ],
+        "usage": "适合论文中的模块介绍、老师汇报时解释创新点，也适合和消融实验一起展示。",
+        "refs": ["../kemm_reference.md", "../figure_catalog.md"],
+    },
 }
 
 
 def configure_fonts() -> None:
     plt.rcParams["font.family"] = "sans-serif"
-    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+    plt.rcParams["font.sans-serif"] = [
+        "Source Han Sans CN",
+        "Noto Sans CJK SC",
+        "Microsoft YaHei UI",
+        "Microsoft YaHei",
+        "PingFang SC",
+        "Heiti SC",
+        "SimHei",
+        "DejaVu Sans",
+    ]
     plt.rcParams["axes.unicode_minus"] = False
     plt.rcParams["svg.fonttype"] = "none"
     plt.rcParams["pdf.fonttype"] = 42
@@ -347,8 +411,16 @@ def canvas(figsize=(13.5, 8.2), facecolor="#ffffff"):
 
 
 def add_heading(ax, title: str, subtitle: str, theme: Theme) -> None:
-    ax.text(0.03, 0.95, title, fontsize=18, fontweight="bold", color=theme.text, va="top")
-    ax.text(0.03, 0.91, subtitle, fontsize=10.5, color=theme.muted_text, va="top")
+    ax.text(0.03, 0.95, title, fontsize=TITLE_FONT, fontweight="bold", color=theme.text, va="top")
+    ax.text(0.03, 0.91, subtitle, fontsize=SUBTITLE_FONT, color=theme.muted_text, va="top")
+
+
+def ref_badge(theme: Theme, label: str | None, *, always: bool = False) -> str | None:
+    if label is None:
+        return None
+    if always or theme.is_bw:
+        return label
+    return None
 
 
 def add_box(
@@ -363,15 +435,28 @@ def add_box(
     fill: str | None = None,
     edge: str | None = None,
     badge: str | None = None,
-    fontsize: float = 10.5,
-    rounding: float = 0.02,
-    lw: float = 1.7,
+    fontsize: float = BODY_FONT,
+    rounding: float = 0.026,
+    lw: float = 1.0,
     line_spacing: float = 1.3,
     text_color: str | None = None,
     dashed: bool = False,
 ):
     fill = fill or theme.flow_fill
     edge = edge or theme.border
+    if not theme.is_bw:
+        shadow = FancyBboxPatch(
+            (x + 0.004, y - 0.004),
+            w,
+            h,
+            boxstyle=f"round,pad=0.01,rounding_size={rounding}",
+            linewidth=0.0,
+            edgecolor="none",
+            facecolor=theme.shadow,
+            alpha=0.35,
+            zorder=1,
+        )
+        ax.add_patch(shadow)
     patch = FancyBboxPatch(
         (x, y),
         w,
@@ -381,17 +466,19 @@ def add_box(
         edgecolor=edge,
         facecolor=fill,
         linestyle="--" if dashed else "-",
+        zorder=2,
     )
     ax.add_patch(patch)
     ax.text(
         x + w / 2,
-        y + h / 2,
+        y + h / 2 - (0.012 if badge else 0.0),
         text,
         ha="center",
         va="center",
         fontsize=fontsize,
         color=text_color or theme.text,
         linespacing=line_spacing,
+        zorder=3,
     )
     if badge:
         badge_w = min(0.065, w * 0.35)
@@ -401,9 +488,10 @@ def add_box(
             badge_w,
             badge_h,
             boxstyle="round,pad=0.004,rounding_size=0.01",
-            linewidth=1.1,
+            linewidth=0.9,
             edgecolor=edge,
             facecolor=theme.background,
+            zorder=4,
         )
         ax.add_patch(badge_patch)
         ax.text(
@@ -412,9 +500,10 @@ def add_box(
             badge,
             ha="center",
             va="center",
-            fontsize=max(8.0, fontsize - 1.8),
+            fontsize=max(BADGE_FONT, fontsize - 2.2),
             color=theme.text,
             fontweight="bold",
+            zorder=5,
         )
     return patch
 
@@ -427,7 +516,7 @@ def add_arrow(
     *,
     text: str | None = None,
     rad: float = 0.0,
-    lw: float = 1.7,
+    lw: float = 0.9,
     color: str | None = None,
     style: str = "-|>",
     linestyle: str = "-",
@@ -438,26 +527,62 @@ def add_arrow(
         start,
         end,
         arrowstyle=style,
-        mutation_scale=12,
+        mutation_scale=8.0,
         linewidth=lw,
         color=color,
         linestyle=linestyle,
         connectionstyle=f"arc3,rad={rad}",
-        shrinkA=0,
-        shrinkB=0,
+        shrinkA=2,
+        shrinkB=2,
     )
     ax.add_patch(patch)
     if text:
         mx = (start[0] + end[0]) / 2 + text_offset[0]
         my = (start[1] + end[1]) / 2 + text_offset[1]
-        ax.text(mx, my, text, fontsize=9.2, color=theme.muted_text, ha="center", va="center")
+        ax.text(mx, my, text, fontsize=CAPTION_FONT, color=theme.muted_text, ha="center", va="center")
     return patch
 
 
+def add_elbow_arrow(
+    ax,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    theme: Theme,
+    *,
+    mode: str = "hv",
+    mid: float | None = None,
+    lw: float = 0.9,
+    color: str | None = None,
+    linestyle: str = "-",
+    text: str | None = None,
+    text_pos: tuple[float, float] | None = None,
+):
+    color = color or theme.border
+    x1, y1 = start
+    x2, y2 = end
+    if mode == "hv":
+        pivot = (mid if mid is not None else x2, y1)
+    else:
+        pivot = (x1, mid if mid is not None else y2)
+    ax.plot([x1, pivot[0]], [y1, pivot[1]], color=color, linewidth=lw, linestyle=linestyle, solid_capstyle="round", zorder=1.5)
+    add_arrow(ax, pivot, end, theme, lw=lw, color=color, linestyle=linestyle, text=None if text_pos is not None else text, text_offset=(0.0, 0.0))
+    if text and text_pos is not None:
+        ax.text(text_pos[0], text_pos[1], text, fontsize=CAPTION_FONT, color=theme.muted_text, ha="center", va="center")
+
+
 def add_group_label(ax, x: float, y: float, w: float, h: float, label: str, theme: Theme) -> None:
-    rect = Rectangle((x, y), w, h, linewidth=1.0, edgecolor=theme.guide, facecolor="none", linestyle="--")
+    rect = FancyBboxPatch(
+        (x, y),
+        w,
+        h,
+        boxstyle="round,pad=0.004,rounding_size=0.012",
+        linewidth=0.8,
+        edgecolor=theme.guide,
+        facecolor="none",
+        linestyle="--",
+    )
     ax.add_patch(rect)
-    ax.text(x + 0.01, y + h + 0.012, label, fontsize=9.5, color=theme.muted_text, va="bottom")
+    ax.text(x + w / 2, y + h + 0.014, label, fontsize=BODY_FONT, color=theme.muted_text, va="bottom", ha="center")
 
 
 def add_swatch(ax, x: float, y: float, color: str, label: str, theme: Theme) -> None:
@@ -487,7 +612,7 @@ def draw_style_board(theme: Theme):
     ax.text(0.39, 0.72, "标题字体：18 pt 粗体", fontsize=18, fontweight="bold", color=theme.text)
     ax.text(0.39, 0.66, "副标题字体：10.5 pt 常规", fontsize=10.5, color=theme.muted_text)
     ax.text(0.39, 0.58, "框内文字：9.5-10.5 pt", fontsize=10.5, color=theme.text)
-    ax.text(0.39, 0.50, "附图标号：编号徽标，放在左上角", fontsize=10.0, color=theme.text)
+    ax.text(0.39, 0.50, "附图标号：专利版显示编号徽标，论文版默认隐藏", fontsize=10.0, color=theme.text)
     ax.text(0.39, 0.42, "说明短句：优先用 1-2 行，不写长段落", fontsize=10.0, color=theme.text)
     ax.text(0.39, 0.34, "灰度规则：不能只靠颜色，必须靠位置 / 形状 / 线型", fontsize=10.0, color=theme.text)
     ax.text(0.39, 0.26, "专利版：去彩色，保留黑白线稿和必要文字", fontsize=10.0, color=theme.text)
@@ -506,74 +631,99 @@ def draw_style_board(theme: Theme):
 
 
 def draw_fig01_system_architecture(theme: Theme):
-    fig, ax = canvas(figsize=(14.5, 8.6), facecolor=theme.background)
+    fig, ax = canvas(figsize=(14.8, 8.8), facecolor=theme.background)
     add_heading(
         ax,
         "图1 本发明总体系统框图",
-        "输入层获取本船 / 目标船 / 障碍物 / 环境场数据，经 KEMM 知识增强求解链得到轨迹解集、代表轨迹与控制结果。",
+        "面向动态航行环境的数据输入先进入建模与变化响应主链，再由多源知识模块提名候选并通过统一竞争得到轨迹解集、代表轨迹与控制结果。",
         theme,
     )
 
-    add_group_label(ax, 0.04, 0.16, 0.19, 0.68, "输入层", theme)
-    add_group_label(ax, 0.26, 0.16, 0.54, 0.68, "处理与决策层", theme)
-    add_group_label(ax, 0.82, 0.16, 0.14, 0.68, "输出层", theme)
+    badge = lambda s: ref_badge(theme, s)
+
+    add_group_label(ax, 0.04, 0.14, 0.18, 0.68, "输入层", theme)
+    add_group_label(ax, 0.25, 0.63, 0.54, 0.20, "核心决策链", theme)
+    add_group_label(ax, 0.25, 0.36, 0.54, 0.17, "核心增强响应层", theme)
+    add_group_label(ax, 0.33, 0.08, 0.40, 0.20, "统一筛选与执行", theme)
+    add_group_label(ax, 0.81, 0.14, 0.15, 0.68, "输出层", theme)
 
     inputs = [
-        ("210", "本船状态数据", 0.71),
-        ("220", "目标船状态数据", 0.58),
-        ("230", "静态障碍物数据", 0.45),
-        ("240", "环境场数据", 0.32),
+        ("210", "本船状态数据", 0.68),
+        ("220", "目标船状态数据", 0.565),
+        ("230", "静态障碍物数据", 0.455),
+        ("240", "环境场数据", 0.315),
     ]
-    for badge, label, y in inputs:
-        add_box(ax, 0.06, y, 0.15, 0.09, label, theme, fill=theme.source_fill, badge=badge, fontsize=10.0)
+    for ref, label, y in inputs:
+        add_box(ax, 0.06, y, 0.14, 0.09, label, theme, fill=theme.source_fill, badge=badge(ref), fontsize=BODY_FONT)
 
-    add_box(ax, 0.28, 0.72, 0.12, 0.11, "数据获取模块", theme, fill=theme.flow_fill, badge="100")
-    add_box(ax, 0.43, 0.72, 0.12, 0.11, "轨迹建模模块", theme, fill=theme.flow_fill, badge="110")
-    add_box(ax, 0.58, 0.72, 0.12, 0.11, "变化诊断模块", theme, fill=theme.flow_fill, badge="120")
-    add_box(ax, 0.72, 0.72, 0.12, 0.11, "自适应分配模块", theme, fill=theme.flow_fill, badge="130")
-
-    branch_x = [0.30, 0.44, 0.58, 0.72]
-    branch_labels = [
-        ("140", "历史记忆模块"),
-        ("150", "前沿预测模块"),
-        ("160", "跨环境迁移模块"),
-        ("170", "重初始化模块"),
+    core = [
+        ("100", "数据获取模块", 0.27),
+        ("110", "轨迹建模模块", 0.42),
+        ("120", "变化诊断模块", 0.57),
+        ("130", "自适应分配模块", 0.72),
     ]
-    for x, (badge, label) in zip(branch_x, branch_labels):
-        add_box(ax, x, 0.48, 0.11, 0.10, label, theme, fill=theme.module_fill, badge=badge, fontsize=9.6)
+    for ref, label, x in core:
+        add_box(ax, x, 0.68, 0.10, 0.12, label, theme, fill=theme.flow_fill, badge=badge(ref), fontsize=BODY_FONT)
 
-    add_box(ax, 0.38, 0.28, 0.17, 0.11, "候选池构建模块", theme, fill=theme.candidate_fill, badge="180")
-    add_box(ax, 0.58, 0.28, 0.17, 0.11, "环境选择模块", theme, fill=theme.candidate_fill, badge="190")
-    add_box(ax, 0.46, 0.12, 0.21, 0.10, "轨迹输出执行模块", theme, fill=theme.output_fill, badge="200")
+    modules = [
+        ("140", "历史记忆模块", 0.27),
+        ("150", "前沿预测模块", 0.41),
+        ("160", "跨环境迁移模块", 0.55),
+        ("170", "重初始化模块", 0.69),
+    ]
+    for ref, label, x in modules:
+        add_box(ax, x, 0.40, 0.10, 0.10, label, theme, fill=theme.module_fill, badge=badge(ref), fontsize=BODY_FONT)
+
+    add_box(ax, 0.37, 0.18, 0.15, 0.10, "候选池构建模块", theme, fill=theme.candidate_fill, badge=badge("180"), fontsize=BODY_FONT)
+    add_box(ax, 0.57, 0.18, 0.15, 0.10, "环境选择模块", theme, fill=theme.candidate_fill, badge=badge("190"), fontsize=BODY_FONT)
+    add_box(ax, 0.46, 0.05, 0.18, 0.09, "轨迹输出执行模块", theme, fill=theme.output_fill, badge=badge("200"), fontsize=BODY_FONT)
 
     outputs = [
-        ("250", "轨迹解集", 0.62),
-        ("260", "代表轨迹", 0.46),
-        ("290", "控制结果", 0.30),
+        ("250", "轨迹解集", 0.59),
+        ("260", "代表轨迹", 0.445),
+        ("290", "控制结果", 0.275),
     ]
-    for badge, label, y in outputs:
-        add_box(ax, 0.84, y, 0.10, 0.09, label, theme, fill=theme.output_fill, badge=badge, fontsize=9.8)
+    for ref, label, y in outputs:
+        add_box(ax, 0.84, y, 0.10, 0.09, label, theme, fill=theme.output_fill, badge=badge(ref), fontsize=BODY_FONT)
 
+    # Input merge spine.
+    ax.plot([0.22, 0.22], [0.36, 0.74], color=theme.guide, linewidth=1.0, solid_capstyle="round")
     for _, _, y in inputs:
-        add_arrow(ax, (0.21, y + 0.045), (0.28, 0.775), theme, color=theme.guide)
-    add_arrow(ax, (0.40, 0.775), (0.43, 0.775), theme)
-    add_arrow(ax, (0.55, 0.775), (0.58, 0.775), theme)
-    add_arrow(ax, (0.70, 0.775), (0.72, 0.775), theme)
+        ax.plot([0.20, 0.22], [y + 0.045, y + 0.045], color=theme.guide, linewidth=1.0, solid_capstyle="round")
+    add_arrow(ax, (0.22, 0.74), (0.27, 0.74), theme, color=theme.guide, lw=0.9)
+    ax.text(0.13, 0.81, "航行环境输入", fontsize=BODY_FONT, color=theme.muted_text, ha="center")
 
-    for x in [0.355, 0.495, 0.635, 0.775]:
-        add_arrow(ax, (0.78, 0.72), (x, 0.58), theme, color=theme.accent if not theme.is_bw else theme.border)
-    for x in [0.355, 0.495, 0.635, 0.775]:
-        add_arrow(ax, (x, 0.48), (0.465, 0.39), theme, color=theme.secondary_accent if not theme.is_bw else theme.border)
-    add_arrow(ax, (0.55, 0.335), (0.58, 0.335), theme)
-    add_arrow(ax, (0.665, 0.28), (0.565, 0.22), theme)
-    add_arrow(ax, (0.75, 0.335), (0.84, 0.665), theme, text="规划解集", text_offset=(0.02, 0.02))
-    add_arrow(ax, (0.75, 0.32), (0.84, 0.505), theme, text="代表轨迹", text_offset=(0.02, 0.0))
-    add_arrow(ax, (0.67, 0.17), (0.84, 0.345), theme, text="控制结果", text_offset=(0.02, -0.01))
-    add_arrow(ax, (0.565, 0.12), (0.565, 0.08), theme, text="执行反馈", text_offset=(0.07, 0.0))
-    add_arrow(ax, (0.565, 0.08), (0.34, 0.12), theme, rad=-0.25, color=theme.guide, linestyle="--")
+    # Core chain.
+    add_arrow(ax, (0.37, 0.74), (0.42, 0.74), theme, lw=0.9)
+    add_arrow(ax, (0.52, 0.74), (0.57, 0.74), theme, lw=0.9)
+    add_arrow(ax, (0.67, 0.74), (0.72, 0.74), theme, lw=0.9)
 
-    ax.text(0.52, 0.57, "多源知识增强层", fontsize=10.4, color=theme.muted_text, ha="center")
-    ax.text(0.50, 0.04, "说明：130 按环境变化信息调度 140/150/160/170，统一并入 180 后由 190 竞争筛选。", fontsize=9.5, color=theme.muted_text)
+    # Allocation bus to four knowledge modules.
+    ax.plot([0.77, 0.77], [0.68, 0.56], color=theme.accent if not theme.is_bw else theme.border, linewidth=1.0, solid_capstyle="round")
+    ax.plot([0.32, 0.77], [0.56, 0.56], color=theme.accent if not theme.is_bw else theme.border, linewidth=1.0, solid_capstyle="round")
+    for _, _, x in modules:
+        add_arrow(ax, (x + 0.05, 0.56), (x + 0.05, 0.50), theme, color=theme.accent if not theme.is_bw else theme.border, lw=0.9)
+    ax.text(0.545, 0.588, "依据变化信息调度四类候选来源", fontsize=CAPTION_FONT, color=theme.muted_text, ha="center")
+
+    # Merge bus from modules to candidate pool.
+    ax.plot([0.32, 0.74], [0.34, 0.34], color=theme.secondary_accent if not theme.is_bw else theme.border, linewidth=1.0, solid_capstyle="round")
+    for _, _, x in modules:
+        add_arrow(ax, (x + 0.05, 0.40), (x + 0.05, 0.34), theme, color=theme.secondary_accent if not theme.is_bw else theme.border, lw=0.9)
+    add_elbow_arrow(ax, (0.50, 0.34), (0.445, 0.28), theme, mode="hv", mid=0.445, color=theme.secondary_accent if not theme.is_bw else theme.border, lw=0.9)
+    ax.text(0.53, 0.313, "并行提名候选后统一汇聚", fontsize=CAPTION_FONT, color=theme.muted_text, ha="center")
+
+    # Selection and execution.
+    add_arrow(ax, (0.52, 0.23), (0.57, 0.23), theme, lw=0.9)
+    add_elbow_arrow(ax, (0.64, 0.18), (0.555, 0.14), theme, mode="hv", mid=0.555, lw=0.9)
+
+    add_elbow_arrow(ax, (0.72, 0.23), (0.84, 0.635), theme, mode="hv", mid=0.80, lw=0.9)
+    add_elbow_arrow(ax, (0.72, 0.215), (0.84, 0.49), theme, mode="hv", mid=0.79, lw=0.9)
+    add_elbow_arrow(ax, (0.64, 0.095), (0.84, 0.32), theme, mode="hv", mid=0.77, lw=0.9)
+
+    add_arrow(ax, (0.555, 0.05), (0.555, 0.025), theme, text="执行反馈", text_offset=(0.06, 0.0), lw=0.9)
+    add_arrow(ax, (0.555, 0.025), (0.41, 0.08), theme, rad=-0.30, color=theme.guide, linestyle="--", lw=0.9)
+
+    ax.text(0.52, 0.012, "核心逻辑：先建模并诊断变化，再调度记忆 / 预测 / 迁移 / 探索，统一进入候选池后由环境选择收束。", fontsize=CAPTION_FONT, color=theme.muted_text, ha="center")
     return fig
 
 
@@ -587,17 +737,17 @@ def draw_fig02_method_flow(theme: Theme):
     )
 
     positions = {
-        "S100": (0.05, 0.72),
-        "S200": (0.22, 0.72),
-        "S300": (0.39, 0.72),
-        "S400": (0.56, 0.72),
-        "S500": (0.73, 0.72),
-        "S600": (0.17, 0.42),
+        "S100": (0.04, 0.72),
+        "S200": (0.23, 0.72),
+        "S300": (0.42, 0.72),
+        "S400": (0.61, 0.72),
+        "S500": (0.80, 0.72),
+        "S600": (0.15, 0.42),
         "S700": (0.41, 0.42),
-        "S800": (0.65, 0.42),
-        "S900": (0.35, 0.18),
-        "S1000": (0.55, 0.18),
-        "S1100": (0.75, 0.18),
+        "S800": (0.67, 0.42),
+        "S900": (0.31, 0.17),
+        "S1000": (0.53, 0.17),
+        "S1100": (0.75, 0.17),
     }
     labels = {
         "S100": "获取动态航行\n环境数据",
@@ -626,36 +776,46 @@ def draw_fig02_method_flow(theme: Theme):
         "S1100": theme.output_fill,
     }
 
+    add_group_label(ax, 0.03, 0.66, 0.92, 0.20, "问题建模与变化诊断", theme)
+    add_group_label(ax, 0.12, 0.36, 0.74, 0.18, "多源候选生成", theme)
+    add_group_label(ax, 0.28, 0.11, 0.65, 0.18, "统一筛选与滚动执行", theme)
+
     for key, (x, y) in positions.items():
-        add_box(ax, x, y, 0.16, 0.11, labels[key], theme, fill=fills[key], badge=key, fontsize=9.8)
+        add_box(ax, x, y, 0.14, 0.11, labels[key], theme, fill=fills[key], badge=ref_badge(theme, key), fontsize=BODY_FONT)
 
-    add_arrow(ax, (0.21, 0.775), (0.22, 0.775), theme)
-    add_arrow(ax, (0.38, 0.775), (0.39, 0.775), theme)
-    add_arrow(ax, (0.55, 0.775), (0.56, 0.775), theme)
-    add_arrow(ax, (0.72, 0.775), (0.73, 0.775), theme)
+    add_arrow(ax, (0.18, 0.775), (0.23, 0.775), theme)
+    add_arrow(ax, (0.37, 0.775), (0.42, 0.775), theme)
+    add_arrow(ax, (0.56, 0.775), (0.61, 0.775), theme)
+    add_arrow(ax, (0.75, 0.775), (0.80, 0.775), theme)
 
-    add_arrow(ax, (0.81, 0.72), (0.25, 0.53), theme, color=theme.accent if not theme.is_bw else theme.border)
-    add_arrow(ax, (0.81, 0.72), (0.49, 0.53), theme, color=theme.accent if not theme.is_bw else theme.border)
-    add_arrow(ax, (0.81, 0.72), (0.73, 0.53), theme, color=theme.accent if not theme.is_bw else theme.border)
-    ax.text(0.86, 0.62, "记忆 / 预测 /\n迁移 / 重初始化\n按比例调度", ha="center", va="center", fontsize=9.5, color=theme.muted_text)
+    bus_color = theme.accent if not theme.is_bw else theme.border
+    ax.plot([0.87, 0.87], [0.72, 0.58], color=bus_color, linewidth=1.0, solid_capstyle="round")
+    ax.plot([0.22, 0.87], [0.58, 0.58], color=bus_color, linewidth=1.0, solid_capstyle="round")
+    for end_x in (0.22, 0.48, 0.74):
+        add_arrow(ax, (end_x, 0.58), (end_x, 0.53), theme, color=bus_color)
+    ax.text(0.89, 0.62, "记忆 / 预测 /\n迁移 / 重初始化\n按比例调度", ha="center", va="center", fontsize=CAPTION_FONT, color=theme.muted_text)
 
-    add_arrow(ax, (0.25, 0.42), (0.43, 0.29), theme, color=theme.secondary_accent if not theme.is_bw else theme.border)
-    add_arrow(ax, (0.49, 0.42), (0.43, 0.29), theme, color=theme.secondary_accent if not theme.is_bw else theme.border)
-    add_arrow(ax, (0.73, 0.42), (0.43, 0.29), theme, color=theme.secondary_accent if not theme.is_bw else theme.border)
-    add_arrow(ax, (0.51, 0.235), (0.55, 0.235), theme)
-    add_arrow(ax, (0.71, 0.235), (0.75, 0.235), theme)
+    merge_color = theme.secondary_accent if not theme.is_bw else theme.border
+    ax.plot([0.22, 0.74], [0.34, 0.34], color=merge_color, linewidth=1.0, solid_capstyle="round")
+    for start_x in (0.22, 0.48, 0.74):
+        add_arrow(ax, (start_x, 0.42), (start_x, 0.34), theme, color=merge_color)
+    add_elbow_arrow(ax, (0.48, 0.34), (0.38, 0.28), theme, mode="hv", mid=0.38, color=merge_color, lw=0.9)
+    add_arrow(ax, (0.45, 0.225), (0.53, 0.225), theme)
+    add_arrow(ax, (0.67, 0.225), (0.75, 0.225), theme)
 
-    add_arrow(
-        ax,
-        (0.83, 0.18),
-        (0.10, 0.72),
-        theme,
-        rad=-0.32,
-        color=theme.guide,
-        linestyle="--",
+    loop_color = theme.guide
+    ax.plot([0.82, 0.82], [0.17, 0.07], color=loop_color, linewidth=0.9, linestyle="--", solid_capstyle="round")
+    ax.plot([0.82, 0.07], [0.07, 0.07], color=loop_color, linewidth=0.9, linestyle="--", solid_capstyle="round")
+    add_arrow(ax, (0.07, 0.07), (0.07, 0.72), theme, color=loop_color, linestyle="--", lw=0.9)
+    ax.text(
+        0.77,
+        0.055,
+        "下一规划周期返回起始步骤" if not theme.is_bw else "下一规划周期返回 S100",
+        fontsize=CAPTION_FONT,
+        color=theme.muted_text,
+        ha="right",
     )
-    ax.text(0.78, 0.09, "下一规划周期返回 S100", fontsize=9.2, color=theme.muted_text, ha="right")
-    ax.text(0.05, 0.08, "核心逻辑：先诊断环境变化，再按比例生成多类候选，最后统一筛选并执行局部前段。", fontsize=9.6, color=theme.muted_text)
+    ax.text(0.05, 0.08, "核心逻辑：先诊断环境变化，再按比例生成多类候选，最后统一筛选并执行局部前段。", fontsize=CAPTION_FONT, color=theme.muted_text)
     return fig
 
 
@@ -668,15 +828,35 @@ def draw_fig03_change_diagnosis(theme: Theme):
         theme,
     )
 
-    add_box(ax, 0.05, 0.58, 0.18, 0.18, "310 历史前沿特征序列\nphi(t-k ... t-1)", theme, fill=theme.source_fill, fontsize=11)
-    add_box(ax, 0.05, 0.32, 0.18, 0.12, "当前前沿特征\nphi(t)", theme, fill=theme.source_fill, fontsize=11)
+    add_box(
+        ax,
+        0.05,
+        0.58,
+        0.18,
+        0.18,
+        "310 历史前沿特征序列\nphi(t-k ... t-1)" if theme.is_bw else "历史前沿特征序列\nphi(t-k ... t-1)",
+        theme,
+        fill=theme.source_fill,
+        fontsize=BODY_FONT,
+    )
+    add_box(ax, 0.05, 0.32, 0.18, 0.12, "当前前沿特征\nphi(t)", theme, fill=theme.source_fill, fontsize=BODY_FONT)
 
-    add_box(ax, 0.30, 0.62, 0.15, 0.12, "变化幅度计算\nM(t)", theme, fill=theme.flow_fill, badge="120")
-    add_box(ax, 0.30, 0.46, 0.15, 0.12, "可迁移性估计\nT(t)", theme, fill=theme.flow_fill, badge="120")
-    add_box(ax, 0.30, 0.30, 0.15, 0.12, "预测置信度估计\nCpred", theme, fill=theme.flow_fill, badge="120")
+    add_box(ax, 0.30, 0.62, 0.15, 0.12, "变化幅度计算\nM(t)", theme, fill=theme.flow_fill, badge=ref_badge(theme, "120"))
+    add_box(ax, 0.30, 0.46, 0.15, 0.12, "可迁移性估计\nT(t)", theme, fill=theme.flow_fill, badge=ref_badge(theme, "120"))
+    add_box(ax, 0.30, 0.30, 0.15, 0.12, "预测置信度估计\nCpred", theme, fill=theme.flow_fill, badge=ref_badge(theme, "120"))
 
-    add_box(ax, 0.53, 0.46, 0.16, 0.18, "上下文区间映射\nctx(M(t))", theme, fill=theme.module_fill, badge="130")
-    add_box(ax, 0.74, 0.46, 0.16, 0.18, "330 策略评分器\nContextual UCB", theme, fill=theme.module_fill, fontsize=11)
+    add_box(ax, 0.53, 0.46, 0.16, 0.18, "上下文区间映射\nctx(M(t))", theme, fill=theme.module_fill, badge=ref_badge(theme, "130"))
+    add_box(
+        ax,
+        0.74,
+        0.46,
+        0.16,
+        0.18,
+        "330 策略评分器\nContextual UCB" if theme.is_bw else "策略评分器\nContextual UCB",
+        theme,
+        fill=theme.module_fill,
+        fontsize=BODY_FONT,
+    )
 
     outputs = [
         ("N_mem", 0.68),
@@ -685,7 +865,7 @@ def draw_fig03_change_diagnosis(theme: Theme):
         ("N_reinit", 0.29),
     ]
     for label, y in outputs:
-        add_box(ax, 0.92, y, 0.06, 0.08, label, theme, fill=theme.output_fill, fontsize=8.6, rounding=0.015)
+        add_box(ax, 0.92, y, 0.06, 0.08, label, theme, fill=theme.output_fill, fontsize=CAPTION_FONT, rounding=0.015)
 
     add_arrow(ax, (0.23, 0.67), (0.30, 0.68), theme)
     add_arrow(ax, (0.23, 0.64), (0.30, 0.52), theme)
@@ -698,8 +878,8 @@ def draw_fig03_change_diagnosis(theme: Theme):
     for _, y in outputs:
         add_arrow(ax, (0.90, 0.55), (0.92, y + 0.04), theme, color=theme.accent if not theme.is_bw else theme.border)
 
-    ax.text(0.53, 0.36, "先诊断再分配\n不是固定比例", fontsize=10.5, color=theme.secondary_accent if not theme.is_bw else theme.muted_text, ha="center")
-    ax.text(0.05, 0.12, "诊断量建议：M(t) 表示变化强度，T(t) 表示历史知识可迁移性，Cpred 表示预测可靠性。", fontsize=9.6, color=theme.muted_text)
+    ax.text(0.53, 0.36, "先诊断再分配\n不是固定比例", fontsize=BODY_FONT, color=theme.secondary_accent if not theme.is_bw else theme.muted_text, ha="center", va="center", linespacing=1.2)
+    ax.text(0.05, 0.12, "诊断量建议：M(t) 表示变化强度，T(t) 表示历史知识可迁移性，Cpred 表示预测可靠性。", fontsize=CAPTION_FONT, color=theme.muted_text)
     return fig
 
 
@@ -720,23 +900,27 @@ def draw_fig04_multisource_candidates(theme: Theme):
         (None, "探索预算触发", "170", "重初始化模块", "重初始化候选"),
     ]
     for x, (source_badge, source_label, badge, module_label, cand_label) in zip(xs, sources):
-        add_box(ax, x, 0.70, 0.15, 0.10, source_label, theme, fill=theme.source_fill, badge=source_badge, fontsize=10.0)
-        add_box(ax, x, 0.51, 0.15, 0.11, module_label, theme, fill=theme.module_fill, badge=badge, fontsize=10.0)
-        add_box(ax, x, 0.28, 0.15, 0.12, cand_label, theme, fill=theme.candidate_fill, fontsize=9.6, rounding=0.03)
+        source_text = source_label if not (theme.is_bw and source_badge is None) else source_label
+        add_box(ax, x, 0.70, 0.15, 0.10, source_text, theme, fill=theme.source_fill, badge=ref_badge(theme, source_badge), fontsize=BODY_FONT)
+        add_box(ax, x, 0.51, 0.15, 0.11, module_label, theme, fill=theme.module_fill, badge=ref_badge(theme, badge), fontsize=BODY_FONT)
+        add_box(ax, x, 0.28, 0.15, 0.12, cand_label, theme, fill=theme.candidate_fill, fontsize=BODY_FONT, rounding=0.03)
 
         add_arrow(ax, (x + 0.075, 0.70), (x + 0.075, 0.62), theme)
         add_arrow(ax, (x + 0.075, 0.51), (x + 0.075, 0.40), theme)
 
         for dx, dy in [(0.035, 0.04), (0.075, 0.065), (0.115, 0.04)]:
-            circ = Circle((x + dx, 0.31 + dy), 0.008, facecolor=theme.accent, edgecolor=theme.border, linewidth=0.8)
+            circ = Circle((x + dx, 0.31 + dy), 0.007, facecolor=theme.accent, edgecolor=theme.border, linewidth=0.5)
             ax.add_patch(circ)
 
-    add_box(ax, 0.34, 0.06, 0.32, 0.12, "340 统一候选池", theme, fill=theme.output_fill, fontsize=12.0, rounding=0.04)
+    add_box(ax, 0.34, 0.06, 0.32, 0.12, "统一候选池", theme, fill=theme.output_fill, badge=ref_badge(theme, "340"), fontsize=BODY_FONT + 0.8, rounding=0.04)
+    merge_color = theme.secondary_accent if not theme.is_bw else theme.border
+    ax.plot([0.135, 0.825], [0.22, 0.22], color=merge_color, linewidth=1.0, solid_capstyle="round")
     for x in xs:
-        add_arrow(ax, (x + 0.075, 0.28), (0.50, 0.18), theme, color=theme.secondary_accent if not theme.is_bw else theme.border)
+        add_arrow(ax, (x + 0.075, 0.28), (x + 0.075, 0.22), theme, color=merge_color)
+    add_arrow(ax, (0.50, 0.22), (0.50, 0.18), theme, color=merge_color)
 
-    ax.text(0.50, 0.23, "并行提名", ha="center", fontsize=10, color=theme.muted_text)
-    ax.text(0.50, 0.015, "说明：候选池统一承接四类来源，最终优劣由环境选择决定，而非由单个模块直接输出。", ha="center", fontsize=9.5, color=theme.muted_text)
+    ax.text(0.50, 0.24, "并行提名", ha="center", fontsize=BODY_FONT, color=theme.muted_text)
+    ax.text(0.50, 0.015, "说明：候选池统一承接四类来源，最终优劣由环境选择决定，而非由单个模块直接输出。", ha="center", fontsize=CAPTION_FONT, color=theme.muted_text)
     return fig
 
 
@@ -749,24 +933,24 @@ def draw_fig05_candidate_pool(theme: Theme):
         theme,
     )
 
-    add_box(ax, 0.05, 0.32, 0.20, 0.26, "340 统一候选池", theme, fill=theme.candidate_fill, fontsize=12.0, rounding=0.04)
+    add_box(ax, 0.05, 0.32, 0.20, 0.26, "统一候选池", theme, fill=theme.candidate_fill, badge=ref_badge(theme, "340"), fontsize=BODY_FONT + 0.8, rounding=0.04)
     rng = np.random.default_rng(42)
     dots = 24
     xs = 0.075 + rng.random(dots) * 0.15
     ys = 0.36 + rng.random(dots) * 0.18
     colors = [theme.accent, theme.secondary_accent, theme.risk, theme.border]
     for i, (x, y) in enumerate(zip(xs, ys)):
-        circ = Circle((float(x), float(y)), 0.0065, facecolor=colors[i % len(colors)], edgecolor=theme.border, linewidth=0.6)
+        circ = Circle((float(x), float(y)), 0.0058, facecolor=colors[i % len(colors)], edgecolor=theme.border, linewidth=0.45)
         ax.add_patch(circ)
 
-    add_box(ax, 0.33, 0.46, 0.16, 0.11, "目标值评价", theme, fill=theme.flow_fill, badge="F")
-    add_box(ax, 0.33, 0.28, 0.16, 0.11, "约束违背度评价", theme, fill=theme.flow_fill, badge="CV")
-    add_box(ax, 0.57, 0.46, 0.18, 0.11, "第一层：约束支配比较", theme, fill=theme.module_fill, fontsize=10.0)
-    add_box(ax, 0.57, 0.28, 0.18, 0.11, "第二层：非支配排序\n+ 多样性保持", theme, fill=theme.module_fill, fontsize=10.0)
+    add_box(ax, 0.33, 0.46, 0.16, 0.11, "目标值评价", theme, fill=theme.flow_fill, badge=ref_badge(theme, "F"))
+    add_box(ax, 0.33, 0.28, 0.16, 0.11, "约束违背度评价", theme, fill=theme.flow_fill, badge=ref_badge(theme, "CV"))
+    add_box(ax, 0.57, 0.46, 0.18, 0.11, "第一层：约束支配比较", theme, fill=theme.module_fill, fontsize=BODY_FONT)
+    add_box(ax, 0.57, 0.28, 0.18, 0.11, "第二层：非支配排序\n+ 多样性保持", theme, fill=theme.module_fill, fontsize=BODY_FONT)
 
-    add_box(ax, 0.82, 0.46, 0.12, 0.11, "250 轨迹解集", theme, fill=theme.output_fill, fontsize=10.5)
-    add_box(ax, 0.82, 0.28, 0.12, 0.11, "260 代表轨迹", theme, fill=theme.output_fill, fontsize=10.5)
-    ax.text(0.88, 0.23, "安全优先 + 折中效率", fontsize=9.4, color=theme.muted_text, ha="center")
+    add_box(ax, 0.82, 0.46, 0.12, 0.11, "轨迹解集", theme, fill=theme.output_fill, badge=ref_badge(theme, "250"), fontsize=BODY_FONT)
+    add_box(ax, 0.82, 0.28, 0.12, 0.11, "代表轨迹", theme, fill=theme.output_fill, badge=ref_badge(theme, "260"), fontsize=BODY_FONT)
+    ax.text(0.88, 0.23, "安全优先 + 折中效率", fontsize=CAPTION_FONT, color=theme.muted_text, ha="center")
 
     add_arrow(ax, (0.25, 0.45), (0.33, 0.515), theme)
     add_arrow(ax, (0.25, 0.45), (0.33, 0.335), theme)
@@ -775,8 +959,8 @@ def draw_fig05_candidate_pool(theme: Theme):
     add_arrow(ax, (0.75, 0.515), (0.82, 0.515), theme)
     add_arrow(ax, (0.75, 0.335), (0.82, 0.335), theme)
 
-    ax.text(0.66, 0.61, "先比较可行性", fontsize=9.6, color=theme.secondary_accent if not theme.is_bw else theme.muted_text, ha="center")
-    ax.text(0.66, 0.22, "再比较 Pareto 优势与多样性", fontsize=9.6, color=theme.secondary_accent if not theme.is_bw else theme.muted_text, ha="center")
+    ax.text(0.66, 0.61, "先比较可行性", fontsize=CAPTION_FONT, color=theme.secondary_accent if not theme.is_bw else theme.muted_text, ha="center")
+    ax.text(0.66, 0.22, "再比较 Pareto 优势与多样性", fontsize=CAPTION_FONT, color=theme.secondary_accent if not theme.is_bw else theme.muted_text, ha="center")
     return fig
 
 
@@ -785,24 +969,47 @@ def draw_fig06_rolling_replanning(theme: Theme):
     add_heading(
         ax,
         "图6 滚动重规划执行示意图",
-        "规划周期 350 由局部规划时域 270 和执行时域 280 组成；每次只执行代表轨迹前段，再触发下一轮规划。",
+        "规划周期由局部规划时域和执行时域组成；每次只执行代表轨迹前段，再触发下一轮规划。"
+        if not theme.is_bw
+        else "规划周期 350 由局部规划时域 270 和执行时域 280 组成；每次只执行代表轨迹前段，再触发下一轮规划。",
         theme,
     )
 
-    ax.plot([0.07, 0.93], [0.52, 0.52], color=theme.border, linewidth=2.0)
-    ax.text(0.94, 0.52, "时间", va="center", fontsize=10.5, color=theme.text)
+    ax.plot([0.07, 0.93], [0.52, 0.52], color=theme.border, linewidth=1.0, solid_capstyle="round")
+    ax.text(0.94, 0.52, "时间", va="center", fontsize=BODY_FONT, color=theme.text)
 
     cycle_x = [0.12, 0.39, 0.66]
     for idx, x in enumerate(cycle_x, start=1):
-        add_box(ax, x, 0.62, 0.10, 0.09, "局部规划时域\n270", theme, fill=theme.flow_fill, badge=f"350{idx}", fontsize=9.5)
-        add_box(ax, x + 0.11, 0.62, 0.10, 0.09, "执行时域\n280", theme, fill=theme.output_fill, fontsize=9.5)
+        add_box(
+            ax,
+            x,
+            0.62,
+            0.10,
+            0.09,
+            "局部规划时域\n270" if theme.is_bw else "局部规划时域",
+            theme,
+            fill=theme.flow_fill,
+            badge=ref_badge(theme, f"350{idx}"),
+            fontsize=BODY_FONT,
+        )
+        add_box(
+            ax,
+            x + 0.11,
+            0.62,
+            0.10,
+            0.09,
+            "执行时域\n280" if theme.is_bw else "执行时域",
+            theme,
+            fill=theme.output_fill,
+            fontsize=BODY_FONT,
+        )
         add_arrow(ax, (x + 0.10, 0.665), (x + 0.11, 0.665), theme)
 
         plan_center = x + 0.05
         exec_center = x + 0.16
-        ax.plot([plan_center, exec_center], [0.52, 0.52], color=theme.guide, linewidth=3.0)
-        ax.plot([plan_center - 0.02, plan_center + 0.03], [0.44 + idx * 0.04, 0.42 + idx * 0.04], color=theme.accent, linewidth=2.0)
-        ax.plot([exec_center - 0.03, exec_center + 0.03], [0.36 + idx * 0.08, 0.34 + idx * 0.08], color=theme.secondary_accent, linewidth=2.0)
+        ax.plot([plan_center, exec_center], [0.52, 0.52], color=theme.guide, linewidth=1.2, solid_capstyle="round")
+        ax.plot([plan_center - 0.02, plan_center + 0.03], [0.44 + idx * 0.04, 0.42 + idx * 0.04], color=theme.accent, linewidth=1.2, solid_capstyle="round")
+        ax.plot([exec_center - 0.03, exec_center + 0.03], [0.36 + idx * 0.08, 0.34 + idx * 0.08], color=theme.secondary_accent, linewidth=1.2, solid_capstyle="round")
         add_arrow(ax, (x + 0.21, 0.665), (x + 0.27, 0.665), theme, color=theme.guide, linestyle="--")
 
     route = np.array([
@@ -813,9 +1020,9 @@ def draw_fig06_rolling_replanning(theme: Theme):
         [0.90, 0.66],
     ])
     ax.plot(route[:, 0], route[:, 1], color=theme.accent, linewidth=2.5, linestyle="-")
-    ax.text(0.47, 0.71, "仅执行代表轨迹前段", fontsize=10.0, color=theme.text, ha="center")
+    ax.text(0.47, 0.71, "仅执行代表轨迹前段", fontsize=BODY_FONT, color=theme.text, ha="center")
     add_arrow(ax, (0.84, 0.66), (0.17, 0.78), theme, rad=0.28, color=theme.guide, linestyle="--", text="环境更新后再次规划", text_offset=(0.01, 0.03))
-    ax.text(0.10, 0.12, "关键点：本发明不是一次性全局规划，而是局部规划、局部执行、持续更新的闭环。", fontsize=9.7, color=theme.muted_text)
+    ax.text(0.10, 0.12, "关键点：本发明不是一次性全局规划，而是局部规划、局部执行、持续更新的闭环。", fontsize=CAPTION_FONT, color=theme.muted_text)
     return fig
 
 
@@ -1073,7 +1280,7 @@ def draw_fig09_graphical_abstract(theme: Theme):
     ax.text(0.12, 0.20, "Crossing / harbor clutter /\nrisk field / obstacles", fontsize=9.2, color=theme.muted_text, ha="center")
 
     center = (0.37, 0.48)
-    add_box(ax, 0.345, 0.39, 0.05, 0.06, "130", theme, fill=theme.background, fontsize=10, rounding=0.01)
+    add_box(ax, 0.33, 0.39, 0.08, 0.06, "Adaptive\nallocator", theme, fill=theme.background, fontsize=8.8, rounding=0.01)
     ax.text(center[0], 0.33, "Adaptive allocation", fontsize=10.5, color=theme.text, ha="center")
     mech_positions = {
         "Memory": (0.37, 0.69),
@@ -1126,6 +1333,76 @@ def draw_fig09_graphical_abstract(theme: Theme):
     return fig
 
 
+def draw_fig10_kemm_principle_chain(theme: Theme):
+    fig, ax = canvas(figsize=(14.4, 6.9), facecolor=theme.background)
+    add_heading(
+        ax,
+        "KEMM 原理解释图：从变化感知到统一竞争",
+        "这张图面向论文和汇报，强调 KEMM 的核心不是固定算子，而是先诊断变化，再分配预算，再统一竞争筛选。",
+        theme,
+    )
+
+    stage_x = [0.05, 0.29, 0.53, 0.77]
+    stage_w = 0.17
+    stage_h = 0.48
+    stages = [
+        ("变化感知", "读取环境与前沿变化", "提取变化强度\n可迁移性\n预测可靠性", theme.source_fill),
+        ("预算分配", "决定四类候选预算", "根据诊断结果分配\nmemory / prediction\ntransfer / reinit", theme.module_fill),
+        ("多源候选", "并行提名候选解", "四类机制分别给出\n知识复用或探索候选\n避免单策略失灵", theme.candidate_fill),
+        ("统一竞争", "约束优先收束输出", "统一候选池比较\n可行性、Pareto 优势\n与多样性后再执行", theme.output_fill),
+    ]
+
+    for x, (title, top, body, fill) in zip(stage_x, stages):
+        add_box(ax, x, 0.28, stage_w, stage_h, "", theme, fill=fill, rounding=0.03, lw=1.8)
+        ax.text(x + stage_w / 2, 0.67, title, fontsize=13.0, fontweight="bold", color=theme.text, ha="center")
+        ax.text(x + stage_w / 2, 0.60, top, fontsize=10.0, color=theme.muted_text, ha="center")
+        ax.text(x + stage_w / 2, 0.46, body, fontsize=10.4, color=theme.text, ha="center", va="center", linespacing=1.45)
+
+    for idx in range(3):
+        add_arrow(ax, (stage_x[idx] + stage_w, 0.52), (stage_x[idx + 1] - 0.01, 0.52), theme, color=theme.accent, lw=2.2)
+
+    add_box(ax, 0.18, 0.08, 0.64, 0.10, "闭环结果：输出代表轨迹并仅执行前段，环境更新后再次回到变化感知阶段。", theme, fill=theme.flow_fill, rounding=0.03, fontsize=10.5)
+    add_arrow(ax, (0.86, 0.28), (0.22, 0.18), theme, rad=0.26, color=theme.guide, linestyle="--")
+    ax.text(0.50, 0.02, "一句话理解：KEMM 通过“先判断变化类型，再决定怎么复用知识”的方式提升动态环境下的恢复速度与稳定性。", fontsize=10.4, color=theme.muted_text, ha="center")
+    return fig
+
+
+def draw_fig11_module_role_map(theme: Theme):
+    fig, ax = canvas(figsize=(14.5, 8.2), facecolor=theme.background)
+    add_heading(
+        ax,
+        "KEMM 模块职责解释图：四类知识机制分别解决什么问题",
+        "这张图不是流程图，而是把 memory、prediction、transfer、reinit 的适用场景、核心动作和收益拆开解释。",
+        theme,
+    )
+
+    cards = [
+        ("Memory", "重复场景 / 熟悉模式", "检索相似历史精英并恢复候选", "适合 recurring harbor、重复港区布局", 0.06, 0.53, theme.module_fill),
+        ("Prediction", "平滑漂移 / 连续变化", "预测前沿移动趋势并前瞻采样", "适合 drift profile、目标船渐进偏移", 0.32, 0.53, theme.flow_fill),
+        ("Transfer", "结构相似 / 几何偏移", "把相似环境中的知识变换到当前环境", "适合通道宽度变化、障碍群几何偏移", 0.06, 0.21, theme.candidate_fill),
+        ("Reinit", "突变 / 旧知识失效", "主动补充探索样本并恢复多样性", "适合 shock profile、突发封航或风险飙升", 0.32, 0.21, theme.output_fill),
+    ]
+
+    for title, cond, action, gain, x, y, fill in cards:
+        add_box(ax, x, y, 0.22, 0.23, "", theme, fill=fill, rounding=0.03, lw=1.7)
+        ax.text(x + 0.11, y + 0.18, title, ha="center", va="center", fontsize=12.8, fontweight="bold", color=theme.text)
+        ax.text(x + 0.11, y + 0.13, cond, ha="center", va="center", fontsize=9.8, color=theme.muted_text)
+        ax.text(x + 0.11, y + 0.08, action, ha="center", va="center", fontsize=10.2, color=theme.text)
+        ax.text(x + 0.11, y + 0.03, gain, ha="center", va="center", fontsize=9.3, color=theme.muted_text)
+
+    add_box(ax, 0.63, 0.25, 0.29, 0.45, "", theme, fill=theme.flow_fill, rounding=0.03, lw=1.8)
+    ax.text(0.775, 0.62, "协同原则", ha="center", va="center", fontsize=13.0, fontweight="bold", color=theme.text)
+    ax.text(0.775, 0.53, "四模块不是互斥替代，\n而是按变化类型分工提名候选。", ha="center", va="center", fontsize=10.4, color=theme.text, linespacing=1.45)
+    ax.text(0.775, 0.40, "最终所有候选仍需进入\n统一候选池并接受\n约束优先的竞争筛选。", ha="center", va="center", fontsize=10.4, color=theme.text, linespacing=1.45)
+    ax.text(0.775, 0.28, "因此 KEMM 的本质是\n“多知识来源 + 统一收束机制”。", ha="center", va="center", fontsize=10.4, color=theme.secondary_accent if not theme.is_bw else theme.muted_text, linespacing=1.45)
+
+    add_arrow(ax, (0.54, 0.64), (0.63, 0.58), theme, color=theme.accent, lw=1.8)
+    add_arrow(ax, (0.54, 0.58), (0.63, 0.54), theme, color=theme.accent, lw=1.8)
+    add_arrow(ax, (0.54, 0.32), (0.63, 0.42), theme, color=theme.secondary_accent if not theme.is_bw else theme.border, lw=1.8)
+    add_arrow(ax, (0.54, 0.26), (0.63, 0.38), theme, color=theme.secondary_accent if not theme.is_bw else theme.border, lw=1.8)
+    return fig
+
+
 DRAWERS: dict[str, Callable[[Theme], plt.Figure]] = {
     "fig00_visual_language_board": draw_style_board,
     "fig01_system_architecture": draw_fig01_system_architecture,
@@ -1137,6 +1414,8 @@ DRAWERS: dict[str, Callable[[Theme], plt.Figure]] = {
     "fig07_crossing_scene": draw_fig07_crossing,
     "fig08_harbor_clutter_scene": draw_fig08_harbor,
     "fig09_graphical_abstract": draw_fig09_graphical_abstract,
+    "fig10_kemm_principle_chain": draw_fig10_kemm_principle_chain,
+    "fig11_module_role_map": draw_fig11_module_role_map,
 }
 
 
@@ -1151,7 +1430,7 @@ def save_figure(fig: plt.Figure, stem: str, theme: Theme) -> list[Path]:
 
 
 def themes_for_stem(stem: str) -> tuple[Theme, ...]:
-    if stem == "fig09_graphical_abstract":
+    if stem in {"fig09_graphical_abstract", "fig10_kemm_principle_chain", "fig11_module_role_map"}:
         return (THEME_PAPER,)
     return (THEME_PAPER, THEME_BW)
 
@@ -1174,9 +1453,9 @@ def write_index(generated: dict[str, list[Path]]) -> None:
         "",
         "## 使用说明",
         "",
-        "- 论文版优先服务于方法表达、汇报展示和论文排版，允许轻量强调色。",
-        "- 专利黑白版优先服务于附图提交，要求在灰度打印下仍可区分层级。",
-        "- 图1到图8是专利主案核心图号；图9是论文专用视觉摘要，不进入专利黑白版。",
+        "- 论文版优先服务于方法表达、汇报展示和论文排版，默认弱化或隐藏专利构件号，减少视觉干扰。",
+        "- 专利黑白版优先服务于附图提交，保留必要构件号，要求在灰度打印下仍可区分层级。",
+        "- 图1到图8是专利主案核心图号；图9到图11是论文 / 汇报专用解释图，不进入专利黑白版。",
         "- 若后续继续修改图稿，请优先修改 `generate_patent_figures.py` 后再重新导出，避免 README 与实际图稿脱节。",
         "",
         "## 图稿详解",

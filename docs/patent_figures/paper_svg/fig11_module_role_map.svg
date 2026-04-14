@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="823.5pt" height="469.008pt" viewBox="0 0 823.5 469.008" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-04-15T00:23:13.115322</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.7, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 469.008 
+L 823.5 469.008 
+L 823.5 -0 
+L 0 -0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 75.1644 227.230272 
+L 220.8024 227.230272 
+Q 245.0754 227.230272 245.0754 213.592032 
+L 245.0754 127.216512 
+Q 245.0754 113.578272 220.8024 113.578272 
+L 75.1644 113.578272 
+Q 50.8914 113.578272 50.8914 127.216512 
+L 50.8914 213.592032 
+Q 50.8914 227.230272 75.1644 227.230272 
+z
+" clip-path="url(#p626c64028d)" style="fill: #dfe7f1; opacity: 0.35"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 285.5304 227.230272 
+L 431.1684 227.230272 
+Q 455.4414 227.230272 455.4414 213.592032 
+L 455.4414 127.216512 
+Q 455.4414 113.578272 431.1684 113.578272 
+L 285.5304 113.578272 
+Q 261.2574 113.578272 261.2574 127.216512 
+L 261.2574 213.592032 
+Q 261.2574 227.230272 285.5304 227.230272 
+z
+" clip-path="url(#p626c64028d)" style="fill: #dfe7f1; opacity: 0.35"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 75.1644 372.704832 
+L 220.8024 372.704832 
+Q 245.0754 372.704832 245.0754 359.066592 
+L 245.0754 272.691072 
+Q 245.0754 259.052832 220.8024 259.052832 
+L 75.1644 259.052832 
+Q 50.8914 259.052832 50.8914 272.691072 
+L 50.8914 359.066592 
+Q 50.8914 372.704832 75.1644 372.704832 
+z
+" clip-path="url(#p626c64028d)" style="fill: #dfe7f1; opacity: 0.35"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 285.5304 372.704832 
+L 431.1684 372.704832 
+Q 455.4414 372.704832 455.4414 359.066592 
+L 455.4414 272.691072 
+Q 455.4414 259.052832 431.1684 259.052832 
+L 285.5304 259.052832 
+Q 261.2574 259.052832 261.2574 272.691072 
+L 261.2574 359.066592 
+Q 261.2574 372.704832 285.5304 372.704832 
+z
+" clip-path="url(#p626c64028d)" style="fill: #dfe7f1; opacity: 0.35"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 536.3514 354.520512 
+L 738.6264 354.520512 
+Q 762.8994 354.520512 762.8994 340.882272 
+L 762.8994 154.492992 
+Q 762.8994 140.854752 738.6264 140.854752 
+L 536.3514 140.854752 
+Q 512.0784 140.854752 512.0784 154.492992 
+L 512.0784 340.882272 
+Q 512.0784 354.520512 536.3514 354.520512 
+z
+" clip-path="url(#p626c64028d)" style="fill: #dfe7f1; opacity: 0.35"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 445.985143 171.559771 
+Q 480.521558 184.496393 513.173387 196.727087 
+" clip-path="url(#p626c64028d)" style="fill: none; stroke: #4a78b8; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 510.737964 194.106264 
+L 513.173387 196.727087 
+L 509.615475 197.102932 
+z
+" clip-path="url(#p626c64028d)" style="fill: #4a78b8; stroke: #4a78b8; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 446.056255 198.620379 
+Q 480.523446 207.227507 513.038135 215.347057 
+" clip-path="url(#p626c64028d)" style="fill: none; stroke: #4a78b8; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 510.321121 213.019432 
+L 513.038135 215.347057 
+L 509.545827 216.124093 
+z
+" clip-path="url(#p626c64028d)" style="fill: #4a78b8; stroke: #4a78b8; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 445.809584 315.274889 
+Q 480.523706 293.602911 513.530727 272.996674 
+" clip-path="url(#p626c64028d)" style="fill: none; stroke: #b07243; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 509.968963 273.334077 
+L 513.530727 272.996674 
+L 511.66359 276.048527 
+z
+" clip-path="url(#p626c64028d)" style="fill: #b07243; stroke: #b07243; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 445.716249 342.409582 
+Q 480.52374 316.33326 513.720612 291.463547 
+" clip-path="url(#p626c64028d)" style="fill: none; stroke: #b07243; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 510.200268 292.10165 
+L 513.720612 291.463547 
+L 512.118888 294.662684 
+z
+" clip-path="url(#p626c64028d)" style="fill: #b07243; stroke: #b07243; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="patch_11">
+    <path d="M 71.928 225.41184 
+L 217.566 225.41184 
+Q 241.839 225.41184 241.839 211.7736 
+L 241.839 125.39808 
+Q 241.839 111.75984 217.566 111.75984 
+L 71.928 111.75984 
+Q 47.655 111.75984 47.655 125.39808 
+L 47.655 211.7736 
+Q 47.655 225.41184 71.928 225.41184 
+z
+" clip-path="url(#p626c64028d)" style="fill: #fff2e8; stroke: #475467; stroke-width: 1.7; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_12">
+    <path d="M 282.294 225.41184 
+L 427.932 225.41184 
+Q 452.205 225.41184 452.205 211.7736 
+L 452.205 125.39808 
+Q 452.205 111.75984 427.932 111.75984 
+L 282.294 111.75984 
+Q 258.021 111.75984 258.021 125.39808 
+L 258.021 211.7736 
+Q 258.021 225.41184 282.294 225.41184 
+z
+" clip-path="url(#p626c64028d)" style="fill: #f4f8fe; stroke: #475467; stroke-width: 1.7; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_13">
+    <path d="M 71.928 370.8864 
+L 217.566 370.8864 
+Q 241.839 370.8864 241.839 357.24816 
+L 241.839 270.87264 
+Q 241.839 257.2344 217.566 257.2344 
+L 71.928 257.2344 
+Q 47.655 257.2344 47.655 270.87264 
+L 47.655 357.24816 
+Q 47.655 370.8864 71.928 370.8864 
+z
+" clip-path="url(#p626c64028d)" style="fill: #fff7f0; stroke: #475467; stroke-width: 1.7; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_14">
+    <path d="M 282.294 370.8864 
+L 427.932 370.8864 
+Q 452.205 370.8864 452.205 357.24816 
+L 452.205 270.87264 
+Q 452.205 257.2344 427.932 257.2344 
+L 282.294 257.2344 
+Q 258.021 257.2344 258.021 270.87264 
+L 258.021 357.24816 
+Q 258.021 370.8864 282.294 370.8864 
+z
+" clip-path="url(#p626c64028d)" style="fill: #eef9f1; stroke: #475467; stroke-width: 1.7; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_15">
+    <path d="M 533.115 352.70208 
+L 735.39 352.70208 
+Q 759.663 352.70208 759.663 339.06384 
+L 759.663 152.67456 
+Q 759.663 139.03632 735.39 139.03632 
+L 533.115 139.03632 
+Q 508.842 139.03632 508.842 152.67456 
+L 508.842 339.06384 
+Q 508.842 352.70208 533.115 352.70208 
+z
+" clip-path="url(#p626c64028d)" style="fill: #f4f8fe; stroke: #475467; stroke-width: 1.8; stroke-linejoin: miter"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 18px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #1f2937" x="31.473" y="44.31915" transform="rotate(-0 31.473 44.31915)">KEMM 模块职责解释图：四类知识机制分别解决什么问题</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 10.6px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #667085" x="31.473" y="57.094907" transform="rotate(-0 31.473 57.094907)">这张图不是流程图，而是把 memory、prediction、transfer、reinit 的适用场景、核心动作和收益拆开解释。</text>
+   </g>
+   <g id="text_3">
+    <text style="font-weight: 700; font-size: 12.8px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="144.747" y="142.49932" transform="rotate(-0 144.747 142.49932)">Memory</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 9.8px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="144.747" y="164.465548" transform="rotate(-0 144.747 164.465548)">重复场景 / 熟悉模式</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 10.2px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="144.747" y="187.306104" transform="rotate(-0 144.747 187.306104)">检索相似历史精英并恢复候选</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 9.3px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="144.747" y="209.933965" transform="rotate(-0 144.747 209.933965)">适合 recurring harbor、重复港区布局</text>
+   </g>
+   <g id="text_7">
+    <text style="font-weight: 700; font-size: 12.8px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="355.113" y="142.56132" transform="rotate(-0 355.113 142.56132)">Prediction</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 9.8px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="355.113" y="164.465548" transform="rotate(-0 355.113 164.465548)">平滑漂移 / 连续变化</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 10.2px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="355.113" y="187.306104" transform="rotate(-0 355.113 187.306104)">预测前沿移动趋势并前瞻采样</text>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 9.3px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="355.113" y="209.965207" transform="rotate(-0 355.113 209.965207)">适合 drift profile、目标船渐进偏移</text>
+   </g>
+   <g id="text_11">
+    <text style="font-weight: 700; font-size: 12.8px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="144.747" y="288.03588" transform="rotate(-0 144.747 288.03588)">Transfer</text>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 9.8px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="144.747" y="309.940108" transform="rotate(-0 144.747 309.940108)">结构相似 / 几何偏移</text>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 10.2px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="144.747" y="332.780664" transform="rotate(-0 144.747 332.780664)">把相似环境中的知识变换到当前环境</text>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 9.3px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="144.747" y="355.263213" transform="rotate(-0 144.747 355.263213)">适合通道宽度变化、障碍群几何偏移</text>
+   </g>
+   <g id="text_15">
+    <text style="font-weight: 700; font-size: 12.8px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="355.113" y="288.03588" transform="rotate(-0 355.113 288.03588)">Reinit</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 9.8px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="355.113" y="309.940108" transform="rotate(-0 355.113 309.940108)">突变 / 旧知识失效</text>
+   </g>
+   <g id="text_17">
+    <text style="font-size: 10.2px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="355.113" y="332.780664" transform="rotate(-0 355.113 332.780664)">主动补充探索样本并恢复多样性</text>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 9.3px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #667085" x="355.113" y="355.449213" transform="rotate(-0 355.113 355.449213)">适合 shock profile、突发封航或风险飙升</text>
+   </g>
+   <g id="text_19">
+    <text style="font-weight: 700; font-size: 13px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #1f2937" x="634.2525" y="183.531118" transform="rotate(-0 634.2525 183.531118)">协同原则</text>
+   </g>
+   <g id="text_20">
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(582.2525 216.409847)">四模块不是互斥替代，</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(561.4525 231.049797)">而是按变化类型分工提名候选。</text>
+   </g>
+   <g id="text_21">
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(582.2525 268.188913)">最终所有候选仍需进入</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(592.6525 282.828863)">统一候选池并接受</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #1f2937" transform="translate(582.2525 297.468813)">约束优先的竞争筛选。</text>
+   </g>
+   <g id="text_22">
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #b07243" transform="translate(583.65325 330.061847)">因此 KEMM 的本质是</text>
+    <text style="font-size: 10.4px; font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Heiti SC', 'SimHei', 'DejaVu Sans', sans-serif; fill: #b07243" transform="translate(554.517812 344.701797)">“多知识来源 + 统一收束机制”。</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p626c64028d">
+   <rect x="7.2" y="7.2" width="809.1" height="454.608"/>
+  </clipPath>
+ </defs>
+</svg>

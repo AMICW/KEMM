@@ -144,7 +144,10 @@ class ShipKEMMOptimizer:
         return algo
 
     def _inject_initial_guesses(self, population: np.ndarray) -> None:
-        samples = self._initial_guess_samples(len(population))
+        requested = max(1, self.demo_config.kemm.initial_guess_copies)
+        if self.demo_config.kemm.inject_heuristic_detours:
+            requested = max(requested, self.demo_config.kemm.heuristic_detour_limit + 1)
+        samples = self._initial_guess_samples(min(len(population), requested))
         if samples is None or len(samples) == 0:
             return
         population[: len(samples)] = samples
@@ -153,23 +156,34 @@ class ShipKEMMOptimizer:
         kemm_cfg = self.demo_config.kemm
         if not kemm_cfg.inject_initial_guess or max_count <= 0:
             return None
-        base = np.clip(
-            self.context.initial_guess.astype(float),
-            self.context.var_bounds[:, 0],
-            self.context.var_bounds[:, 1],
-        )
-        copies = min(max(1, kemm_cfg.initial_guess_copies), max_count)
-        samples = np.repeat(base[None, :], copies, axis=0)
-        if copies == 1:
-            return samples
+
+        if kemm_cfg.inject_heuristic_detours:
+            heuristic_target = min(max_count, max(1, kemm_cfg.heuristic_detour_limit + 1))
+            samples = self.interface.problem.heuristic_seed_vectors(
+                heuristic_target,
+                offset_scale=kemm_cfg.heuristic_detour_offset_scale,
+            )
+        else:
+            samples = np.zeros((0, self.context.n_var), dtype=float)
+
+        base = np.clip(self.context.initial_guess.astype(float), self.context.var_bounds[:, 0], self.context.var_bounds[:, 1])
+        if len(samples) == 0:
+            samples = base[None, :].copy()
+
+        target_count = min(max_count, max(len(samples), max(1, kemm_cfg.initial_guess_copies)))
+        if len(samples) >= target_count:
+            return samples[:target_count].copy()
+
         scale = kemm_cfg.initial_guess_jitter_ratio * (self.context.var_bounds[:, 1] - self.context.var_bounds[:, 0])
-        noise = np.random.normal(0.0, scale, size=(copies - 1, self.context.n_var))
+        noise = np.random.normal(0.0, scale, size=(target_count - len(samples), self.context.n_var))
         seeded = np.clip(base + noise, self.context.var_bounds[:, 0], self.context.var_bounds[:, 1])
-        samples[1:copies] = seeded
-        return samples
+        return np.vstack([samples, seeded])
 
     def _blend_initial_guess_candidates(self, algo: KEMM_DMOEA_Improved, objective, change_time: float) -> None:
-        samples = self._initial_guess_samples(max(1, min(self.demo_config.kemm.initial_guess_copies, algo.pop_size // 4)))
+        requested = max(1, self.demo_config.kemm.initial_guess_copies)
+        if self.demo_config.kemm.inject_heuristic_detours:
+            requested = max(requested, self.demo_config.kemm.heuristic_detour_limit + 2)
+        samples = self._initial_guess_samples(max(1, min(requested, algo.pop_size // 2)))
         if samples is None or len(samples) == 0:
             return
         if algo.fitness is None:
@@ -218,14 +232,14 @@ class ShipKEMMOptimizer:
         decisions: np.ndarray,
         objectives: np.ndarray,
     ) -> tuple[np.ndarray, EvaluationResult]:
-        evaluations = [self.interface.simulate(ind) for ind in decisions]
+        evaluations = self.interface.simulate_population(decisions, copy_results=False)
         real_index = select_representative_index(
             objectives,
             evaluations,
             self.interface.config.objective_weights,
             safety_clearance=self.interface.config.safety_clearance,
         )
-        return decisions[real_index].copy(), evaluations[real_index]
+        return decisions[real_index].copy(), self.interface.simulate(decisions[real_index])
 
     def _pick_by_weighted_score(self, objectives: np.ndarray) -> int:
         if len(objectives) == 1:

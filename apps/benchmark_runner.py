@@ -22,6 +22,7 @@ import os
 import sys
 import time
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -69,6 +70,122 @@ def _temporary_numpy_seed(seed: int):
         yield
     finally:
         np.random.set_state(caller_state)
+
+
+def _recommended_worker_count(limit: int = 4) -> int:
+    cpu_count = os.cpu_count() or 1
+    if cpu_count <= 1:
+        return 1
+    return max(1, min(limit, cpu_count - 1))
+
+
+def _benchmark_config_snapshot(cfg: "ExperimentConfig") -> dict[str, object]:
+    return {
+        "POP_SIZE": int(getattr(cfg, "POP_SIZE")),
+        "N_VAR": int(getattr(cfg, "N_VAR")),
+        "N_OBJ": int(getattr(cfg, "N_OBJ")),
+        "N_CHANGES": int(getattr(cfg, "N_CHANGES")),
+        "GENS_PER_CHANGE": int(getattr(cfg, "GENS_PER_CHANGE")),
+        "KEMM_CONFIG": replace(getattr(cfg, "KEMM_CONFIG", RuntimeKEMMConfig())) if getattr(cfg, "KEMM_CONFIG", None) is not None else RuntimeKEMMConfig(),
+    }
+
+
+def _instantiate_algorithm_from_snapshot(cfg_snapshot: dict[str, object], algo_spec, lb: np.ndarray, ub: np.ndarray):
+    algo_class = algo_spec
+    config_overrides = {}
+    benchmark_aware_prior = True
+    if isinstance(algo_spec, dict):
+        algo_class = algo_spec.get("algorithm", KEMM_DMOEA_Improved)
+        config_overrides = dict(algo_spec.get("config_overrides", {}))
+        benchmark_aware_prior = bool(algo_spec.get("benchmark_aware_prior", True))
+
+    if algo_class is KEMM_DMOEA_Improved:
+        base_config = cfg_snapshot["KEMM_CONFIG"] or RuntimeKEMMConfig()
+        kemm_config = replace(
+            base_config,
+            pop_size=int(cfg_snapshot["POP_SIZE"]),
+            n_var=int(cfg_snapshot["N_VAR"]),
+            n_obj=int(cfg_snapshot["N_OBJ"]),
+            benchmark_aware_prior=benchmark_aware_prior,
+            **config_overrides,
+        )
+        return algo_class(
+            int(cfg_snapshot["POP_SIZE"]),
+            int(cfg_snapshot["N_VAR"]),
+            int(cfg_snapshot["N_OBJ"]),
+            (lb, ub),
+            config=kemm_config,
+            benchmark_adapter=BenchmarkPriorAdapter() if benchmark_aware_prior else None,
+            benchmark_aware_prior=benchmark_aware_prior,
+        )
+    return algo_class(int(cfg_snapshot["POP_SIZE"]), int(cfg_snapshot["N_VAR"]), int(cfg_snapshot["N_OBJ"]), (lb, ub))
+
+
+def _run_benchmark_case(task: dict[str, object]) -> dict[str, object]:
+    cfg_snapshot = dict(task["cfg_snapshot"])
+    nt = int(task["nt"])
+    tau_t = int(task["tau_t"])
+    problem_suite = DynamicTestProblems(nt=nt, tau_t=tau_t)
+    obj_func, pof_func = problem_suite.get_problem(str(task["prob_name"]))
+
+    n_var = int(cfg_snapshot["N_VAR"])
+    lb = np.zeros(n_var)
+    ub = np.ones(n_var)
+    lb[1:] = -1.0
+    ub[1:] = 1.0
+
+    algo = _instantiate_algorithm_from_snapshot(cfg_snapshot, task["algo_spec"], lb, ub)
+    with _temporary_numpy_seed(int(task["run_seed"])):
+        algo.initialize()
+        t0 = time.time()
+
+        igd_list: List[float] = []
+        hv_list: List[float] = []
+        sp_list: List[float] = []
+        ms_list: List[float] = []
+        generation = 0
+        metrics = PerformanceMetrics()
+
+        for change_index in range(int(cfg_snapshot["N_CHANGES"])):
+            t = problem_suite.get_time(generation)
+
+            if change_index == 0:
+                algo.fitness = algo.evaluate(algo.population, obj_func, t)
+            else:
+                algo.respond_to_change(obj_func, t)
+
+            for _ in range(int(cfg_snapshot["GENS_PER_CHANGE"])):
+                algo.evolve_one_gen(obj_func, t)
+
+            generation += int(cfg_snapshot["GENS_PER_CHANGE"])
+            obtained = algo.get_pareto_front()
+
+            try:
+                true_pof = pof_func(t=t)
+            except TypeError:
+                true_pof = pof_func()
+            ref_point = np.max(np.vstack([true_pof, obtained]), axis=0) + 0.1
+
+            igd_list.append(metrics.igd(obtained, true_pof))
+            hv_list.append(metrics.hypervolume(obtained, ref_point))
+            sp_list.append(metrics.spacing(obtained))
+            ms_list.append(metrics.maximum_spread(obtained, true_pof))
+
+    return {
+        "setting_key": str(task["setting_key"]),
+        "algo_name": str(task["algo_name"]),
+        "prob_name": str(task["prob_name"]),
+        "run": int(task["run"]),
+        "migd": metrics.migd(igd_list),
+        "sp": float(np.mean(sp_list)),
+        "ms": float(np.mean(ms_list)),
+        "time": time.time() - t0,
+        "igd_curve": igd_list,
+        "hv_curve": hv_list,
+        "change_diagnostics": list(getattr(algo, "change_diagnostics_history", [])),
+        "nt": nt,
+        "tau_t": tau_t,
+    }
 
 
 class ExperimentConfig:
@@ -120,6 +237,7 @@ class ExperimentConfig:
     }
     ABLATION_BENCHMARK_PRIOR = False
     KEMM_CONFIG = RuntimeKEMMConfig()
+    MAX_WORKERS = 1
 
     def __init__(self):
         self.POP_SIZE = int(self.__class__.POP_SIZE)
@@ -146,6 +264,7 @@ class ExperimentConfig:
         }
         self.ABLATION_BENCHMARK_PRIOR = bool(self.__class__.ABLATION_BENCHMARK_PRIOR)
         self.KEMM_CONFIG = replace(self.__class__.KEMM_CONFIG)
+        self.MAX_WORKERS = int(self.__class__.MAX_WORKERS)
 
 
 class ExperimentRunner:
@@ -226,6 +345,31 @@ class ExperimentRunner:
             for algo_name in algorithms
         }
 
+    @staticmethod
+    def _store_setting_outcome(
+        *,
+        setting_results,
+        setting_igd_curves,
+        setting_hv_curves,
+        setting_diagnostics,
+        result: dict[str, object],
+        collect_curves: bool,
+        collect_diagnostics: bool,
+    ) -> None:
+        setting_key = str(result["setting_key"])
+        algo_name = str(result["algo_name"])
+        prob_name = str(result["prob_name"])
+        metrics = setting_results[setting_key][algo_name][prob_name]
+        metrics["MIGD"].append(float(result["migd"]))
+        metrics["SP"].append(float(result["sp"]))
+        metrics["MS"].append(float(result["ms"]))
+        metrics["TIME"].append(float(result["time"]))
+        if collect_curves:
+            setting_igd_curves[setting_key][algo_name][prob_name].append(list(result["igd_curve"]))
+            setting_hv_curves[setting_key][algo_name][prob_name].append(list(result["hv_curve"]))
+        if collect_diagnostics:
+            setting_diagnostics[setting_key][algo_name][prob_name].append(list(result["change_diagnostics"]))
+
     def _run_setting_sweep(
         self,
         algorithms: Dict[str, object],
@@ -238,14 +382,61 @@ class ExperimentRunner:
         setting_igd_curves: Dict[str, Dict[str, Dict[str, List[List[float]]]]] = {}
         setting_hv_curves: Dict[str, Dict[str, Dict[str, List[List[float]]]]] = {}
         setting_diagnostics: Dict[str, Dict[str, Dict[str, List[list]]]] = {}
+        configured_workers = max(1, int(getattr(self.cfg, "MAX_WORKERS", 1)))
 
-        total = len(self.cfg.SETTINGS) * len(algorithms) * len(self.cfg.PROBLEMS) * self.cfg.N_RUNS
-        counter = 0
-        t_start = time.time()
+        if configured_workers <= 1:
+            total = len(self.cfg.SETTINGS) * len(algorithms) * len(self.cfg.PROBLEMS) * self.cfg.N_RUNS
+            counter = 0
+            t_start = time.time()
+            for setting in self.cfg.SETTINGS:
+                nt, tau_t = int(setting[0]), int(setting[1])
+                setting_key = self._setting_key((nt, tau_t))
+                problem_suite = DynamicTestProblems(nt=nt, tau_t=tau_t)
+                setting_results[setting_key] = self._initialize_metric_bucket(algorithms)
+                if collect_curves:
+                    setting_igd_curves[setting_key] = self._initialize_curve_bucket(algorithms)
+                    setting_hv_curves[setting_key] = self._initialize_curve_bucket(algorithms)
+                if collect_diagnostics:
+                    setting_diagnostics[setting_key] = self._initialize_curve_bucket(algorithms)
+
+                for algo_name, algo_spec in algorithms.items():
+                    for prob_name in self.cfg.PROBLEMS:
+                        obj_func, pof_func = problem_suite.get_problem(prob_name)
+                        for run in range(self.cfg.N_RUNS):
+                            counter += 1
+                            elapsed = time.time() - t_start
+                            rate = counter / (elapsed + 1e-6)
+                            eta = (total - counter) / (rate + 1e-6)
+                            print(
+                                f"\r  [{progress_prefix} {counter:4d}/{total}] ({nt:>2d},{tau_t:>2d}) "
+                                f"{algo_name:>16s}|{prob_name:>5s}|R{run+1} | "
+                                f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
+                                end="",
+                                flush=True,
+                            )
+                            seed_offset = sum((index + 1) * ord(ch) for index, ch in enumerate(f"{setting_key}:{algo_name}")) % 10000
+                            run_seed = run * 1000 + seed_offset
+                            with _temporary_numpy_seed(run_seed):
+                                result = self._run_single(algo_spec, obj_func, pof_func, problem_suite=problem_suite)
+                            metrics = setting_results[setting_key][algo_name][prob_name]
+                            metrics["MIGD"].append(result["migd"])
+                            metrics["SP"].append(result["sp"])
+                            metrics["MS"].append(result["ms"])
+                            metrics["TIME"].append(result["time"])
+                            if collect_curves:
+                                setting_igd_curves[setting_key][algo_name][prob_name].append(result["igd_curve"])
+                                setting_hv_curves[setting_key][algo_name][prob_name].append(result["hv_curve"])
+                            if collect_diagnostics:
+                                setting_diagnostics[setting_key][algo_name][prob_name].append(result["change_diagnostics"])
+
+            print(f"\n  完成, 总耗时 {time.time() - t_start:.1f}s")
+            return setting_results, setting_igd_curves, setting_hv_curves, setting_diagnostics
+
+        tasks: list[dict[str, object]] = []
+        cfg_snapshot = _benchmark_config_snapshot(self.cfg)
         for setting in self.cfg.SETTINGS:
             nt, tau_t = int(setting[0]), int(setting[1])
             setting_key = self._setting_key((nt, tau_t))
-            problem_suite = DynamicTestProblems(nt=nt, tau_t=tau_t)
             setting_results[setting_key] = self._initialize_metric_bucket(algorithms)
             if collect_curves:
                 setting_igd_curves[setting_key] = self._initialize_curve_bucket(algorithms)
@@ -255,34 +446,102 @@ class ExperimentRunner:
 
             for algo_name, algo_spec in algorithms.items():
                 for prob_name in self.cfg.PROBLEMS:
-                    obj_func, pof_func = problem_suite.get_problem(prob_name)
                     for run in range(self.cfg.N_RUNS):
+                        seed_offset = sum((index + 1) * ord(ch) for index, ch in enumerate(f"{setting_key}:{algo_name}")) % 10000
+                        tasks.append(
+                            {
+                                "cfg_snapshot": cfg_snapshot,
+                                "setting_key": setting_key,
+                                "nt": nt,
+                                "tau_t": tau_t,
+                                "algo_name": algo_name,
+                                "algo_spec": algo_spec,
+                                "prob_name": prob_name,
+                                "run": run,
+                                "run_seed": run * 1000 + seed_offset,
+                            }
+                        )
+
+        total = len(tasks)
+        counter = 0
+        t_start = time.time()
+        actual_workers = max(1, min(configured_workers, total))
+        if actual_workers <= 1:
+            for task in tasks:
+                result = _run_benchmark_case(task)
+                counter += 1
+                self._store_setting_outcome(
+                    setting_results=setting_results,
+                    setting_igd_curves=setting_igd_curves,
+                    setting_hv_curves=setting_hv_curves,
+                    setting_diagnostics=setting_diagnostics,
+                    result=result,
+                    collect_curves=collect_curves,
+                    collect_diagnostics=collect_diagnostics,
+                )
+                elapsed = time.time() - t_start
+                rate = counter / (elapsed + 1e-6)
+                eta = (total - counter) / (rate + 1e-6)
+                print(
+                    f"\r  [{progress_prefix} {counter:4d}/{total}] ({int(result['nt']):>2d},{int(result['tau_t']):>2d}) "
+                    f"{str(result['algo_name']):>16s}|{str(result['prob_name']):>5s}|R{int(result['run'])+1} | "
+                    f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
+                    end="",
+                    flush=True,
+                )
+        else:
+            print(f"  使用 {actual_workers} 个进程并行执行 {total} 个 benchmark 任务...", flush=True)
+            try:
+                with ProcessPoolExecutor(max_workers=actual_workers) as executor:
+                    future_map = {executor.submit(_run_benchmark_case, task): task for task in tasks}
+                    for future in as_completed(future_map):
+                        result = future.result()
                         counter += 1
+                        self._store_setting_outcome(
+                            setting_results=setting_results,
+                            setting_igd_curves=setting_igd_curves,
+                            setting_hv_curves=setting_hv_curves,
+                            setting_diagnostics=setting_diagnostics,
+                            result=result,
+                            collect_curves=collect_curves,
+                            collect_diagnostics=collect_diagnostics,
+                        )
                         elapsed = time.time() - t_start
                         rate = counter / (elapsed + 1e-6)
                         eta = (total - counter) / (rate + 1e-6)
                         print(
-                            f"\r  [{progress_prefix} {counter:4d}/{total}] ({nt:>2d},{tau_t:>2d}) "
-                            f"{algo_name:>16s}|{prob_name:>5s}|R{run+1} | "
+                            f"\r  [{progress_prefix} {counter:4d}/{total}] ({int(result['nt']):>2d},{int(result['tau_t']):>2d}) "
+                            f"{str(result['algo_name']):>16s}|{str(result['prob_name']):>5s}|R{int(result['run'])+1} | "
                             f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
                             end="",
                             flush=True,
                         )
-                        seed_offset = sum((index + 1) * ord(ch) for index, ch in enumerate(f"{setting_key}:{algo_name}")) % 10000
-                        run_seed = run * 1000 + seed_offset
-                        with _temporary_numpy_seed(run_seed):
-                            result = self._run_single(algo_spec, obj_func, pof_func, problem_suite=problem_suite)
-                        metrics = setting_results[setting_key][algo_name][prob_name]
-                        metrics["MIGD"].append(result["migd"])
-                        metrics["SP"].append(result["sp"])
-                        metrics["MS"].append(result["ms"])
-                        metrics["TIME"].append(result["time"])
-                        if collect_curves:
-                            setting_igd_curves[setting_key][algo_name][prob_name].append(result["igd_curve"])
-                            setting_hv_curves[setting_key][algo_name][prob_name].append(result["hv_curve"])
-                        if collect_diagnostics:
-                            setting_diagnostics[setting_key][algo_name][prob_name].append(result["change_diagnostics"])
-
+            except (PermissionError, OSError) as exc:
+                print(f"\n  [WARN] 并行进程池不可用，回退到串行执行: {exc}", flush=True)
+                counter = 0
+                t_start = time.time()
+                for task in tasks:
+                    result = _run_benchmark_case(task)
+                    counter += 1
+                    self._store_setting_outcome(
+                        setting_results=setting_results,
+                        setting_igd_curves=setting_igd_curves,
+                        setting_hv_curves=setting_hv_curves,
+                        setting_diagnostics=setting_diagnostics,
+                        result=result,
+                        collect_curves=collect_curves,
+                        collect_diagnostics=collect_diagnostics,
+                    )
+                    elapsed = time.time() - t_start
+                    rate = counter / (elapsed + 1e-6)
+                    eta = (total - counter) / (rate + 1e-6)
+                    print(
+                        f"\r  [{progress_prefix} {counter:4d}/{total}] ({int(result['nt']):>2d},{int(result['tau_t']):>2d}) "
+                        f"{str(result['algo_name']):>16s}|{str(result['prob_name']):>5s}|R{int(result['run'])+1} | "
+                        f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
+                        end="",
+                        flush=True,
+                    )
         print(f"\n  完成, 总耗时 {time.time() - t_start:.1f}s")
         return setting_results, setting_igd_curves, setting_hv_curves, setting_diagnostics
 
@@ -686,6 +945,11 @@ def run_benchmark(
     with_jy: bool = False,
     output_dir: str | None = None,
     plot_config=None,
+    workers: int | None = None,
+    render_figures: bool = True,
+    run_ablation: bool = True,
+    algorithms: list[str] | None = None,
+    problems: list[str] | None = None,
 ):
     """benchmark 主线常用入口。"""
 
@@ -695,6 +959,7 @@ def run_benchmark(
     print("=" * 70)
 
     cfg = ExperimentConfig()
+    cfg.MAX_WORKERS = max(1, int(workers or 1))
     if quick:
         cfg.N_RUNS = 2
         cfg.N_CHANGES = 5
@@ -705,8 +970,23 @@ def run_benchmark(
         cfg.PROBLEMS = cfg.PROBLEMS_STANDARD + cfg.PROBLEMS_JY
         print(f"  [MODE] 含 JY 系列 ({len(cfg.PROBLEMS)} 个测试函数)")
 
+    if algorithms:
+        unknown_algorithms = [name for name in algorithms if name not in cfg.ALGORITHMS]
+        if unknown_algorithms:
+            raise ValueError(f"Unknown benchmark algorithms: {unknown_algorithms}. Available: {list(cfg.ALGORITHMS.keys())}")
+        cfg.ALGORITHMS = {name: cfg.ALGORITHMS[name] for name in algorithms}
+
+    if problems:
+        available_problems = list(dict.fromkeys(cfg.PROBLEMS_STANDARD + cfg.PROBLEMS_JY + list(cfg.PROBLEMS)))
+        unknown_problems = [name for name in problems if name not in available_problems]
+        if unknown_problems:
+            raise ValueError(f"Unknown benchmark problems: {unknown_problems}. Available: {available_problems}")
+        cfg.PROBLEMS = list(problems)
+
     print(f"\n  种群={cfg.POP_SIZE} 变量={cfg.N_VAR} 问题={cfg.PROBLEMS}")
     print(f"  运行次数={cfg.N_RUNS} (建议 ≥20 用于 Wilcoxon 检验)")
+    print(f"  并行进程={cfg.MAX_WORKERS}")
+    print(f"  导出图表={'是' if render_figures else '否'}  消融实验={'是' if run_ablation else '否'}")
     print(f"  算法: {list(cfg.ALGORITHMS.keys())}\n")
 
     report_root = build_report_paths(Path(output_dir) if output_dir else None, prefix="benchmark")
@@ -715,7 +995,7 @@ def run_benchmark(
 
     runner = ExperimentRunner(cfg)
     results = runner.run_all()
-    ablation_results = runner.run_ablation_all()
+    ablation_results = runner.run_ablation_all() if run_ablation else {}
 
     presenter = ResultPresenter(
         results,
@@ -730,7 +1010,10 @@ def run_benchmark(
     print()
     presenter.print_tables()
     presenter.print_ranking()
-    presenter.plot_all(prefix=figures_prefix, plot_config=plot_config)
+    if render_figures:
+        presenter.plot_all(prefix=figures_prefix, plot_config=plot_config)
+    else:
+        print("  [SKIP] 已跳过 benchmark 图表导出，仅保留原始结果与 Markdown 摘要。")
     export_benchmark_report(
         results,
         cfg,
@@ -748,6 +1031,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--quick", action="store_true", help="Run a lightweight smoke configuration.")
     parser.add_argument("--full", action="store_true", help="Run the default full benchmark suite.")
     parser.add_argument("--with-jy", action="store_true", help="Append JY problems to the benchmark suite.")
+    parser.add_argument("--workers", type=int, default=None, help="Process workers for outer-run parallelism; default is auto for full mode and 1 for quick mode.")
+    parser.add_argument("--skip-ablation", action="store_true", help="Skip ablation/control variants to reduce runtime.")
+    parser.add_argument("--summary-only", action="store_true", help="Skip figure rendering and export only raw tables plus Markdown summary.")
+    parser.add_argument("--algorithms", nargs="*", default=None, help="Optional benchmark algorithms to run, e.g. KEMM RI Tr.")
+    parser.add_argument("--problems", nargs="*", default=None, help="Optional benchmark problems to run, e.g. FDA1 FDA3 dMOP2.")
     parser.add_argument("--output-dir", default=None, help="Optional output directory.")
     parser.add_argument("--plot-preset", default="paper", help="Plot preset: default/paper/ieee/nature/thesis.")
     parser.add_argument("--science-style", default="", help="Comma-separated SciencePlots style tuple.")
@@ -770,16 +1058,62 @@ def main():
         appendix_plots=args.appendix_plots,
         interactive_figures=args.interactive_figures,
     )
+    workers = args.workers
+    if workers is None:
+        workers = 1 if args.quick and not args.full and not args.with_jy else _recommended_worker_count()
+    render_figures = not args.summary_only
+    run_ablation = not args.skip_ablation
 
     if args.full:
-        run_benchmark(quick=False, output_dir=args.output_dir, plot_config=plot_config)
+        run_benchmark(
+            quick=False,
+            output_dir=args.output_dir,
+            plot_config=plot_config,
+            workers=workers,
+            render_figures=render_figures,
+            run_ablation=run_ablation,
+            algorithms=args.algorithms,
+            problems=args.problems,
+        )
     elif args.with_jy:
-        run_benchmark(quick=False, with_jy=True, output_dir=args.output_dir, plot_config=plot_config)
+        run_benchmark(
+            quick=False,
+            with_jy=True,
+            output_dir=args.output_dir,
+            plot_config=plot_config,
+            workers=workers,
+            render_figures=render_figures,
+            run_ablation=run_ablation,
+            algorithms=args.algorithms,
+            problems=args.problems,
+        )
     elif args.quick:
-        run_benchmark(quick=True, output_dir=args.output_dir, plot_config=plot_config)
+        run_benchmark(
+            quick=True,
+            output_dir=args.output_dir,
+            plot_config=plot_config,
+            workers=workers,
+            render_figures=render_figures,
+            run_ablation=run_ablation,
+            algorithms=args.algorithms,
+            problems=args.problems,
+        )
     else:
-        run_benchmark(quick=True, output_dir=args.output_dir, plot_config=plot_config)
-        print("\n  使用选项: --quick | --full | --with-jy | --output-dir <path> | --plot-preset <preset>")
+        run_benchmark(
+            quick=True,
+            output_dir=args.output_dir,
+            plot_config=plot_config,
+            workers=workers,
+            render_figures=render_figures,
+            run_ablation=run_ablation,
+            algorithms=args.algorithms,
+            problems=args.problems,
+        )
+        print(
+            "\n  使用选项: --quick | --full | --with-jy | --workers <n> | --skip-ablation | "
+            "--summary-only | --algorithms <names...> | --problems <names...> | "
+            "--output-dir <path> | --plot-preset <preset>"
+        )
 
 
 if __name__ == "__main__":

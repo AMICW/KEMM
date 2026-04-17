@@ -273,6 +273,60 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         self.assertGreater(unsafe.objectives[1], safe.objectives[1])
         self.assertGreater(unsafe.objectives[2], safe.objectives[2])
 
+    def test_terminal_progress_penalty_does_not_pollute_risk_or_cv(self):
+        problem = self.interface.problem
+        sample_count = len(problem.simulate(problem.initial_guess()).own_trajectory.times)
+        zeros = np.zeros(sample_count, dtype=float)
+        safe_clearance = np.full(sample_count, 260.0, dtype=float)
+        ship_distance = np.full(sample_count, 320.0, dtype=float)
+        dcpa_series = np.full(sample_count, 180.0, dtype=float)
+        tcpa_series = np.full(sample_count, 60.0, dtype=float)
+        risk = RiskBreakdown(
+            max_risk=0.12,
+            mean_risk=0.08,
+            intrusion_time=0.0,
+            min_clearance=260.0,
+            min_dcpa=180.0,
+            min_tcpa=60.0,
+            min_static_clearance=260.0,
+            min_ship_distance=320.0,
+            risk_series=np.full(sample_count, 0.08, dtype=float),
+            domain_risk_series=np.full(sample_count, 0.08, dtype=float),
+            dcpa_risk_series=zeros.copy(),
+            obstacle_risk_series=zeros.copy(),
+            environment_risk_series=zeros.copy(),
+            clearance_series=safe_clearance,
+            static_clearance_series=safe_clearance.copy(),
+            ship_distance_series=ship_distance,
+            dcpa_series=dcpa_series,
+            tcpa_series=tcpa_series,
+            colreg_scale_series=np.ones(sample_count, dtype=float),
+        )
+        near_obj, near_penalties = problem.compose_objectives(
+            fuel=100.0,
+            total_time=120.0,
+            risk=risk,
+            terminal_distance=20.0,
+        )
+        far_obj, far_penalties = problem.compose_objectives(
+            fuel=100.0,
+            total_time=120.0,
+            risk=risk,
+            terminal_distance=2000.0,
+        )
+        self.assertGreater(far_obj[0], near_obj[0])
+        self.assertGreater(far_obj[1], near_obj[1])
+        self.assertAlmostEqual(float(far_obj[2]), float(near_obj[2]))
+        self.assertAlmostEqual(float(far_penalties["cv"]), float(near_penalties["cv"]))
+
+    def test_heuristic_seed_vectors_include_distinct_safe_detours(self):
+        seeds = self.interface.problem.heuristic_seed_vectors(8)
+        self.assertGreaterEqual(len(seeds), 4)
+        rounded = np.unique(np.round(seeds, decimals=3), axis=0)
+        self.assertGreaterEqual(len(rounded), 4)
+        base = self.interface.problem.initial_guess()
+        self.assertTrue(any(np.linalg.norm(seed - base) > 1e-6 for seed in seeds[1:]))
+
     def test_ship_kemm_runtime_config_is_forwarded_to_algorithm(self):
         demo = DemoConfig(
             optimizer_name="kemm",

@@ -273,6 +273,19 @@ ship 主线已经不是单次静态规划 demo，而是：
 - 执行方式：滚动重规划 episode
 - 输出结果：最终执行轨迹、每步局部前沿、knee point、快照、控制时序、统计指标
 
+当前更准确的算法架构口径是：
+
+- `kemm/` 提供通用动态多目标响应骨架
+- `ship_simulation/optimizer/problem.py` 把船舶规划写成 `fuel / time / risk` 三目标问题
+- `ship_simulation/optimizer/kemm_solver.py` 在 KEMM 候选生成链外，再注入场景感知绕行初始候选
+- `ship_simulation/optimizer/selection.py` 用“安全优先 -> 终点推进 -> 折中得分”的规则选代表轨迹
+- `episode.py` 把单次优化连接成滚动重规划闭环
+
+这里最关键的实现细节有两个：
+
+- `risk` 目标现在主要表达沿轨迹的真实安全暴露，不再把 terminal progress 直接并进风险维
+- `cv` 现在主要表达 `越界 + 净距不足/侵入 + 风险侵入时间` 这类约束违背，而不是把终端推进不足也混进去
+
 核心代码位置：
 
 - 场景：`ship_simulation/scenario/*`
@@ -432,6 +445,7 @@ apply_experiment_profile(config, "shock")
 - `DemoConfig.kemm.pop_size / generations / seed` 控制 ship 侧运行预算
 - `DemoConfig.kemm.use_change_response` 控制滚动重规划时是否调用 KEMM 的 change response
 - `DemoConfig.kemm.runtime.enable_memory / enable_prediction / enable_transfer / enable_adaptive` 对应真实 KEMM 模块开关
+- `DemoConfig.kemm.inject_heuristic_detours / heuristic_detour_limit / heuristic_detour_offset_scale` 控制场景感知绕行初值是否注入、注入多少以及横向偏移尺度
 
 例如：
 

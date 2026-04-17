@@ -179,14 +179,14 @@ class ShipNSGAStyleOptimizer:
         return int(np.argmin(normalized @ weights))
 
     def _select_representative_solution(self, decisions: np.ndarray, objectives: np.ndarray) -> tuple[np.ndarray, EvaluationResult]:
-        evaluations = [self.interface.simulate(ind) for ind in decisions]
+        evaluations = self.interface.simulate_population(decisions, copy_results=False)
         chosen = select_representative_index(
             objectives,
             evaluations,
             self.interface.config.objective_weights,
             safety_clearance=self.interface.config.safety_clearance,
         )
-        return decisions[chosen].copy(), evaluations[chosen]
+        return decisions[chosen].copy(), self.interface.simulate(decisions[chosen])
 
     def _summarize_generation(self, fitness: np.ndarray, generation: int) -> Dict[str, float]:
         mins = np.min(fitness[:, :3], axis=0)

@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 import time
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -102,6 +104,40 @@ def _build_quick_demo_config() -> DemoConfig:
     demo.episode.execution_horizon = 160.0
     demo.episode.max_replans = 8
     return demo
+
+
+def _recommended_worker_count(limit: int = 4) -> int:
+    cpu_count = os.cpu_count() or 1
+    if cpu_count <= 1:
+        return 1
+    return max(1, min(limit, cpu_count - 1))
+
+
+def _ship_report_task(task: dict[str, object]) -> dict[str, object]:
+    scenario_key = str(task["scenario_key"])
+    algorithm = str(task["algorithm"])
+    run_index = int(task["run_index"])
+    scenario_index = int(task["scenario_index"])
+    algorithm_index = int(task["algorithm_index"])
+    config = task["config"]
+    demo_config = task["demo_config"]
+
+    scenario = ScenarioGenerator(config).generate(scenario_key)
+    run_demo = replace(
+        demo_config,
+        random_search_seed=demo_config.random_search_seed + run_index,
+        kemm=replace(demo_config.kemm, seed=demo_config.kemm.seed + run_index),
+    )
+    planner = RollingHorizonPlanner(scenario=scenario, config=config, demo_config=run_demo)
+    episode = planner.run(optimizer_name=algorithm)
+    return {
+        "scenario_key": scenario_key,
+        "algorithm": algorithm,
+        "run_index": run_index,
+        "scenario_index": scenario_index,
+        "algorithm_index": algorithm_index,
+        "episode": episode,
+    }
 
 
 def _normalized_weights(weights: Sequence[float]) -> np.ndarray:
@@ -563,11 +599,20 @@ def generate_report_with_config(
     output_root: Path | None = None,
     plot_config: ShipPlotConfig | None = None,
     scenario_keys: list[str] | None = None,
+    algorithm_keys: Sequence[str] | None = None,
     verbose: bool = True,
     n_runs: int | None = None,
+    max_workers: int = 1,
+    render_figures: bool = True,
 ) -> Path:
     plot_config = plot_config or build_ship_plot_config(demo_config.plot_preset, appendix_plots=demo_config.appendix_plots)
     scenario_keys = scenario_keys or ["head_on", "crossing", "overtaking", "harbor_clutter"]
+    if algorithm_keys:
+        allowed_algorithms = {spec.key for spec in DEFAULT_ALGORITHM_SPECS}
+        unknown_algorithms = [name for name in algorithm_keys if name not in allowed_algorithms]
+        if unknown_algorithms:
+            raise ValueError(f"Unknown ship algorithms: {unknown_algorithms}. Available: {sorted(allowed_algorithms)}")
+        demo_config = replace(demo_config, report_algorithms=tuple(algorithm_keys))
     generator = ScenarioGenerator(config)
     algorithm_specs = _resolve_algorithm_specs(demo_config)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -585,8 +630,26 @@ def generate_report_with_config(
     aggregate_payload: dict[str, dict[str, list[PlanningEpisodeResult]]] = defaultdict(dict)
     step_payload: dict[str, dict[str, list[dict[str, object]]]] = defaultdict(dict)
     representative_payload: dict[str, dict[str, dict[str, object]]] = defaultdict(dict)
-    scenario_map: dict[str, object] = {}
+    scenario_map: dict[str, object] = {key: generator.generate(key) for key in scenario_keys}
     t0 = time.time()
+    task_specs = [
+        {
+            "scenario_key": scenario_key,
+            "algorithm": algorithm,
+            "run_index": run_index,
+            "scenario_index": scenario_index,
+            "algorithm_index": algorithm_index,
+            "config": config,
+            "demo_config": demo_config,
+        }
+        for scenario_index, scenario_key in enumerate(scenario_keys, start=1)
+        for algorithm_index, algorithm in enumerate(algorithms)
+        for run_index in range(run_count)
+    ]
+    task_total = len(task_specs)
+    actual_workers = max(1, min(int(max_workers), task_total))
+    effective_workers = actual_workers
+    episode_lookup: dict[tuple[str, str, int], PlanningEpisodeResult] = {}
 
     if verbose:
         print("Ship simulation batch report started.", flush=True)
@@ -595,24 +658,74 @@ def generate_report_with_config(
         print(f"Scenarios: {', '.join(scenario_keys)}", flush=True)
         print(f"Experiment profile: {config.experiment.profile_name}", flush=True)
         print(f"Algorithms: {', '.join(spec.label for spec in algorithm_specs)} | Runs per algorithm: {run_count}", flush=True)
+        print(f"Episode workers: {actual_workers}", flush=True)
+        print(f"Render figures: {'yes' if render_figures else 'no'}", flush=True)
+
+    if actual_workers > 1:
+        if verbose:
+            print(f"Parallel episode execution started for {task_total} tasks.", flush=True)
+        try:
+            with ProcessPoolExecutor(max_workers=actual_workers) as executor:
+                future_map = {executor.submit(_ship_report_task, task): task for task in task_specs}
+                for completed, future in enumerate(as_completed(future_map), start=1):
+                    payload = future.result()
+                    scenario_key = str(payload["scenario_key"])
+                    algorithm = str(payload["algorithm"])
+                    run_index = int(payload["run_index"])
+                    episode = payload["episode"]
+                    episode_lookup[(scenario_key, algorithm, run_index)] = episode
+                    if verbose:
+                        print(
+                            f"[RUN {completed:>3d}/{task_total}] {scenario_key} | {_optimizer_display_name(algorithm):>10s} | "
+                            f"run {run_index + 1}/{run_count}: fuel={episode.final_evaluation.objectives[0]:.2f}, "
+                            f"time={episode.final_evaluation.objectives[1]:.2f}, risk={episode.final_evaluation.objectives[2]:.3f}",
+                            flush=True,
+                        )
+        except (PermissionError, OSError) as exc:
+            if verbose:
+                print(f"[WARN] Parallel episode execution unavailable; falling back to serial: {exc}", flush=True)
+            effective_workers = 1
+            episode_lookup.clear()
+            for completed, task in enumerate(task_specs, start=1):
+                payload = _ship_report_task(task)
+                scenario_key = str(payload["scenario_key"])
+                algorithm = str(payload["algorithm"])
+                run_index = int(payload["run_index"])
+                episode = payload["episode"]
+                episode_lookup[(scenario_key, algorithm, run_index)] = episode
+                if verbose:
+                    print(
+                        f"[RUN {completed:>3d}/{task_total}] {scenario_key} | {_optimizer_display_name(algorithm):>10s} | "
+                        f"run {run_index + 1}/{run_count}: fuel={episode.final_evaluation.objectives[0]:.2f}, "
+                        f"time={episode.final_evaluation.objectives[1]:.2f}, risk={episode.final_evaluation.objectives[2]:.3f}",
+                        flush=True,
+                    )
+    else:
+        for completed, task in enumerate(task_specs, start=1):
+            payload = _ship_report_task(task)
+            scenario_key = str(payload["scenario_key"])
+            algorithm = str(payload["algorithm"])
+            run_index = int(payload["run_index"])
+            episode = payload["episode"]
+            episode_lookup[(scenario_key, algorithm, run_index)] = episode
+            if verbose:
+                print(
+                    f"[RUN {completed:>3d}/{task_total}] {scenario_key} | {_optimizer_display_name(algorithm):>10s} | "
+                    f"run {run_index + 1}/{run_count}: fuel={episode.final_evaluation.objectives[0]:.2f}, "
+                    f"time={episode.final_evaluation.objectives[1]:.2f}, risk={episode.final_evaluation.objectives[2]:.3f}",
+                    flush=True,
+                )
 
     for scenario_index, scenario_key in enumerate(scenario_keys, start=1):
-        scenario = generator.generate(scenario_key)
-        scenario_map[scenario_key] = scenario
+        scenario = scenario_map[scenario_key]
         if verbose:
-            print(f"[{scenario_index}/{len(scenario_keys)}] Scenario `{scenario_key}`", flush=True)
+            print(f"[{scenario_index}/{len(scenario_keys)}] Render scenario `{scenario_key}`", flush=True)
         aggregate_payload[scenario_key] = {}
         step_payload[scenario_key] = {}
         for algorithm in algorithms:
             episodes: list[PlanningEpisodeResult] = []
             for run_index in range(run_count):
-                run_demo = replace(
-                    demo_config,
-                    random_search_seed=demo_config.random_search_seed + run_index,
-                    kemm=replace(demo_config.kemm, seed=demo_config.kemm.seed + run_index),
-                )
-                planner = RollingHorizonPlanner(scenario=scenario, config=config, demo_config=run_demo)
-                episode = planner.run(optimizer_name=algorithm)
+                episode = episode_lookup[(scenario_key, algorithm, run_index)]
                 episodes.append(episode)
                 scenario_rows.append(_episode_row(scenario_key, algorithm, run_index, episode))
                 step_payload[scenario_key].setdefault(algorithm, []).append(
@@ -649,8 +762,6 @@ def generate_report_with_config(
                         ],
                     }
                 )
-                if verbose:
-                    print(f"  - {_optimizer_display_name(algorithm):>10s} run {run_index + 1}/{run_count}: fuel={episode.final_evaluation.objectives[0]:.2f}, time={episode.final_evaluation.objectives[1]:.2f}, risk={episode.final_evaluation.objectives[2]:.3f}", flush=True)
             aggregate_payload[scenario_key][algorithm] = episodes
 
         best_series: list[ExperimentSeries] = []
@@ -679,36 +790,39 @@ def generate_report_with_config(
                     problem_config=config,
                 )
             )
-        histories_by_label = {series.label: series.histories for series in best_series}
-        metrics_by_label = {series.label: series.distribution_metrics for series in best_series}
-        scenario_context = ScenarioFigureContext(
-            scenario_key=scenario_key,
-            scenario=scenario,
-            best_series=best_series,
-            histories_by_label=histories_by_label,
-            metrics_by_label=metrics_by_label,
-        )
-        for spec in SCENARIO_FIGURE_SPECS:
-            output_path = figures_dir / f"{scenario_key}_{spec.suffix}.png"
-            renderer = globals()[spec.renderer_name]
-            renderer(scenario_context, output_path, plot_config)
+        if render_figures:
+            histories_by_label = {series.label: series.histories for series in best_series}
+            metrics_by_label = {series.label: series.distribution_metrics for series in best_series}
+            scenario_context = ScenarioFigureContext(
+                scenario_key=scenario_key,
+                scenario=scenario,
+                best_series=best_series,
+                histories_by_label=histories_by_label,
+                metrics_by_label=metrics_by_label,
+            )
+            for spec in SCENARIO_FIGURE_SPECS:
+                output_path = figures_dir / f"{scenario_key}_{spec.suffix}.png"
+                renderer = globals()[spec.renderer_name]
+                renderer(scenario_context, output_path, plot_config)
 
     aggregates = _aggregate_rows(scenario_rows)
-    global_context = GlobalFigureContext(
-        scenario_map=scenario_map,
-        aggregate_payload=aggregate_payload,
-        algorithm_specs=algorithm_specs,
-    )
-    for spec in GLOBAL_FIGURE_SPECS:
-        output_path = figures_dir / spec.file_name
-        renderer = globals()[spec.renderer_name]
-        renderer(global_context, output_path, plot_config)
+    if render_figures:
+        global_context = GlobalFigureContext(
+            scenario_map=scenario_map,
+            aggregate_payload=aggregate_payload,
+            algorithm_specs=algorithm_specs,
+        )
+        for spec in GLOBAL_FIGURE_SPECS:
+            output_path = figures_dir / spec.file_name
+            renderer = globals()[spec.renderer_name]
+            renderer(global_context, output_path, plot_config)
     _write_csv(raw_dir / "summary.csv", scenario_rows)
     _write_csv(raw_dir / "aggregate_summary.csv", aggregates)
     _write_json(raw_dir / "summary.json", {"runs": scenario_rows, "aggregates": aggregates})
     _write_json(raw_dir / "planning_steps.json", step_payload)
     _write_json(raw_dir / "representative_runs.json", representative_payload)
-    _write_json(raw_dir / "figure_manifest.json", _figure_manifest(list(scenario_keys)))
+    if render_figures:
+        _write_json(raw_dir / "figure_manifest.json", _figure_manifest(list(scenario_keys)))
     _write_json(
         raw_dir / "scenario_catalog.json",
         {
@@ -722,10 +836,12 @@ def generate_report_with_config(
             "scenario_keys": list(scenario_keys),
             "algorithms": [{"key": spec.key, "label": spec.label} for spec in algorithm_specs],
             "n_runs": run_count,
+            "workers": effective_workers,
             "plot_preset": demo_config.plot_preset,
             "experiment_profile": config.experiment.profile_name,
             "experiment_enabled": bool(config.experiment.enabled),
             "experiment_config": asdict(config.experiment),
+            "render_figures": bool(render_figures),
             "appendix_plots": bool(plot_config.appendix_plots),
             "interactive_figures": bool(plot_config.interactive_figures),
             "interactive_html": bool(plot_config.interactive_html),
@@ -733,10 +849,11 @@ def generate_report_with_config(
         },
     )
     _write_markdown(reports_dir / "summary.md", aggregates)
-    _write_figure_inventory(reports_dir / "figure_inventory.md", scenario_keys)
+    if render_figures:
+        _write_figure_inventory(reports_dir / "figure_inventory.md", scenario_keys)
 
     # 附录图只保留旧柱状对比图，不再作为默认主图。
-    if plot_config.appendix_plots:
+    if render_figures and plot_config.appendix_plots:
         aggregate_lookup = {(row["scenario_key"], row["optimizer"]): row for row in aggregates}
         comparison_pair = None
         if "kemm" in algorithms and "random" in algorithms:
@@ -761,6 +878,9 @@ def generate_report_with_config(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate ship simulation report.")
     parser.add_argument("--quick", action="store_true", help="Run a lightweight smoke configuration.")
+    parser.add_argument("--workers", type=int, default=None, help="Process workers for scenario/algorithm/run parallelism; default is auto for full mode and 1 for quick mode.")
+    parser.add_argument("--summary-only", action="store_true", help="Skip figure rendering and export only raw results plus Markdown summary.")
+    parser.add_argument("--algorithms", nargs="*", default=None, help="Optional ship algorithms to run, e.g. kemm random.")
     parser.add_argument("--plot-preset", default="paper", help="Plot preset: default/paper/ieee/nature/thesis.")
     parser.add_argument("--experiment-profile", default="baseline", help="Ship experiment profile: baseline/drift/shock/recurring_harbor.")
     parser.add_argument("--science-style", default="", help="Comma-separated SciencePlots style tuple, e.g. science,ieee,no-latex.")
@@ -791,13 +911,19 @@ def main() -> None:
         interactive_figures=args.interactive_figures,
         interactive_html=args.interactive_html,
     )
+    workers = args.workers
+    if workers is None:
+        workers = 1 if args.quick else _recommended_worker_count()
     generate_report_with_config(
         config=config,
         demo_config=demo_config,
         plot_config=plot_config,
         scenario_keys=args.scenarios,
+        algorithm_keys=args.algorithms,
         verbose=True,
         n_runs=args.n_runs,
+        max_workers=workers,
+        render_figures=not args.summary_only,
     )
 
 

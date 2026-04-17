@@ -49,6 +49,9 @@ class ShipOptimizerInterface:
     def simulate(self, decision_vector: np.ndarray) -> EvaluationResult:
         return self.problem.simulate(decision_vector)
 
+    def simulate_population(self, population: np.ndarray, *, copy_results: bool = True) -> list[EvaluationResult]:
+        return self.problem.simulate_population(population, copy_results=copy_results)
+
     @staticmethod
     def make_objective_function(context: OptimizerContext) -> Callable[[np.ndarray, float], np.ndarray]:
         """包装成 benchmark 主线常用的 `obj_func(pop, t)` 风格接口。"""

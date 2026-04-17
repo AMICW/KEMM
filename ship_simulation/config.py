@@ -195,6 +195,9 @@ class KEMMConfig:
     inject_initial_guess: bool = True
     initial_guess_copies: int = 4
     initial_guess_jitter_ratio: float = 0.04
+    inject_heuristic_detours: bool = True
+    heuristic_detour_limit: int = 6
+    heuristic_detour_offset_scale: float = 1.0
     use_change_response: bool = True
     reuse_solver_state_across_replans: bool = False
     runtime: RuntimeKEMMConfig = field(default_factory=lambda: RuntimeKEMMConfig(benchmark_aware_prior=False))

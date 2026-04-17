@@ -231,7 +231,41 @@ ship 主线现在默认走 episode，而不是一次性全局规划。
 3. 再比较终点推进程度
 4. 最后才比较多目标折中分数
 
-### 5.1 ship 侧 KEMM 配置入口
+### 5.1 ship 侧算法架构口径
+
+如果你要把 ship 主线写进论文、汇报或答辩，当前更准确的口径不是“直接把 benchmark 版 KEMM 搬到船舶场景”，而是：
+
+- `kemm/` 继续承担通用动态多目标响应骨架
+- `ship_simulation/optimizer/problem.py` 负责把航迹规划写成三目标问题
+- `ship_simulation/optimizer/kemm_solver.py` 负责把 ship 专用的初始候选注入到 KEMM 种群
+- `ship_simulation/optimizer/selection.py` 负责从当前 Pareto 解集中选出真正可执行的代表轨迹
+- `episode.py` 负责把“求解一次”变成“滚动重规划闭环”
+
+从论文结构上，可以把 ship 侧算法理解成“通用 KEMM 响应引擎 + 船舶场景专用安全壳层”，而不是另起一套新算法。
+
+当前 ship 实现里最需要说明的 3 个点是：
+
+1. `场景感知绕行初始候选`
+   - `ShipTrajectoryProblem.heuristic_seed_vectors()` 会先根据起点、终点、航路法向量、静态障碍中心、目标船初始位置和 `safety_clearance` 生成一批显式绕行种子。
+   - 这些种子不是纯随机点，而是“直航骨架 + 侧向偏移 + 危险区局部抬升”的 warm start。
+   - `ship_simulation/optimizer/kemm_solver.py` 会在初始化种群和变化响应阶段都把这批候选混入 KEMM 的候选池，避免 crossing、harbor_clutter 一类场景一开始就被高风险直穿路径主导。
+
+2. `风险目标与终端推进解耦`
+   - 当前 `risk` 目标主要表达“沿轨迹的碰撞与侵入风险”，核心由 `max_risk`、`mean_risk`、安全净距惩罚和侵入时间惩罚组成。
+   - 终点没走到位这件事，不再直接加到 `risk` 上。
+   - 终端推进不足主要通过 `fuel/time` 维度里的 terminal penalty，以及代表解选择阶段的“终点推进优先级”来体现。
+   - 这个调整的目的，是避免“没走到终点”和“真的高风险”被混成同一种风险信号。
+
+3. `CV 只保留约束语义`
+   - 当前 `cv` 聚合的是 `bounds_penalty + safety_penalty + intrusion_penalty`。
+   - 也就是说，`cv` 现在更接近“可行性/安全性违背度”，而不是把终端推进不足也塞进去。
+   - 这样做以后，环境选择阶段先比较“是否越界、是否侵入、是否安全不足”，再比较多目标优劣，语义更干净，也更适合做物理场景解释。
+
+如果你需要一句很凝练的话，可以直接说：
+
+`ship 侧 KEMM 的本质是：用通用动态多目标响应框架搜索候选轨迹，再用船舶场景专用的绕行初值、安全约束和滚动执行机制把它落到可解释的航迹规划问题上。`
+
+### 5.2 ship 侧 KEMM 配置入口
 
 如果你要改 ship 主线里的 KEMM，不要只改包装层预算，还要区分这两层：
 
@@ -250,10 +284,24 @@ ship 主线现在默认走 episode，而不是一次性全局规划。
 - `DemoConfig.kemm.runtime.enable_prediction`
 - `DemoConfig.kemm.runtime.enable_transfer`
 - `DemoConfig.kemm.runtime.enable_adaptive`
+- `DemoConfig.kemm.inject_heuristic_detours`
+- `DemoConfig.kemm.heuristic_detour_limit`
+- `DemoConfig.kemm.heuristic_detour_offset_scale`
 
 ship 侧会强制保持 `benchmark_aware_prior=False`，避免把 benchmark-only prior 混进物理场景主线。
 
-### 5.2 ship 报告算法入口
+其中最后三项是 ship 侧最近新增的场景感知绕行注入参数：
+
+- `inject_heuristic_detours`
+  控制是否把绕行初值注入到初始种群和变化响应候选中
+- `heuristic_detour_limit`
+  控制最多保留多少条启发式绕行种子
+- `heuristic_detour_offset_scale`
+  控制绕行侧向偏移幅度
+
+这组参数属于 ship 实例化层，不改变 KEMM 通用主架构，但会明显影响 crossing 和 harbor_clutter 这类物理语义场景的恢复质量。
+
+### 5.3 ship 报告算法入口
 
 如果你想让 ship 报告不再固定比较 `kemm / nsga_style / random`，优先改：
 
@@ -311,7 +359,20 @@ ship 侧会强制保持 `benchmark_aware_prior=False`，避免把 benchmark-only
 - 环境标量场暴露
 - COLREG 角色缩放
 
-在 `problem.py` 中，`safety_clearance`、实际侵障和高风险暴露还会被继续转成目标惩罚，避免滚动 episode 在局部窗口里“先贴边再说”。
+在 `problem.py` 中，目标层和约束层当前已经做了更明确的语义拆分：
+
+- `risk` 目标表达沿轨迹本身的风险暴露，当前可概括为  
+  `risk = alpha * max_risk + (1 - alpha) * mean_risk + lambda_rs * safety_penalty + lambda_intr * intrusion_penalty`
+- `fuel` 和 `time` 目标继续承担终端推进不足的 terminal penalty
+- `cv` 只保留 `bounds_penalty + safety_penalty + intrusion_penalty`
+
+这意味着：
+
+- “离终点还差多远”不再伪装成“碰撞风险”
+- “是否越界 / 是否侵入 / 是否净距不足”优先通过 `cv` 比较
+- “是否更省油 / 更快 / 风险更低”留给 Pareto 目标去比较
+
+这个拆分对物理语义解释非常重要，因为老师或审稿人看到 `risk` 指标时，可以把它理解成真实的安全风险，而不是被终端推进误污染的混合分数。
 
 ---
 

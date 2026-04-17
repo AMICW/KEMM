@@ -106,6 +106,12 @@ class ShipTrajectoryProblem:
         self._objective_cache: dict[bytes, np.ndarray] = {}
         self._evaluation_cache: dict[bytes, EvaluationResult] = {}
 
+    def _cached_evaluation(self, cache_key: bytes, *, copy_result: bool) -> EvaluationResult | None:
+        cached = self._evaluation_cache.get(cache_key)
+        if cached is None:
+            return None
+        return _copy_evaluation_result(cached) if copy_result else cached
+
     def _build_bounds(self) -> np.ndarray:
         xmin, xmax, ymin, ymax = self.scenario.area
         vmin, vmax = self.config.speed_bounds
@@ -126,6 +132,129 @@ class ShipTrajectoryProblem:
             vector[base : base + 2] = waypoint
             vector[base + 2] = cruise_speed
         return vector
+
+    def _route_geometry(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, np.ndarray, np.ndarray]:
+        start = self.scenario.own_ship.initial_state.position()
+        goal = np.asarray(self.scenario.own_ship.goal, dtype=float)
+        route = goal - start
+        length = float(np.linalg.norm(route))
+        if length <= 1e-9:
+            direction = np.array([1.0, 0.0], dtype=float)
+        else:
+            direction = route / length
+        normal = np.array([-direction[1], direction[0]], dtype=float)
+        fractions = np.linspace(0.0, 1.0, self.n_waypoints + 2)[1:-1]
+        base_points = np.vstack([start + frac * route for frac in fractions]).astype(float)
+        return start, goal, direction, normal, length, fractions, base_points
+
+    def _clip_waypoint(self, point: Sequence[float]) -> np.ndarray:
+        xmin, xmax, ymin, ymax = self.scenario.area
+        margin = max(self.config.ship.length * 0.35, 30.0)
+        clipped = np.asarray(point, dtype=float).copy()
+        clipped[0] = float(np.clip(clipped[0], xmin + margin, xmax - margin))
+        clipped[1] = float(np.clip(clipped[1], ymin + margin, ymax - margin))
+        return clipped
+
+    def _encode_seed_vector(self, intermediate_waypoints: np.ndarray, segment_speeds: Sequence[float] | None = None) -> np.ndarray:
+        vector = np.zeros(self.n_var, dtype=float)
+        if segment_speeds is None:
+            segment_speeds = [float(np.mean(self.config.speed_bounds))] * self.n_waypoints
+        for idx in range(self.n_waypoints):
+            base = idx * 3
+            vector[base : base + 2] = self._clip_waypoint(intermediate_waypoints[idx])
+            vector[base + 2] = float(np.clip(segment_speeds[idx], *self.config.speed_bounds))
+        return vector
+
+    def _static_hazard_descriptors(self) -> list[tuple[np.ndarray, float]]:
+        hazards: list[tuple[np.ndarray, float]] = []
+        for obstacle in self.scenario.static_obstacles:
+            if hasattr(obstacle, "radius"):
+                center = np.asarray(obstacle.center, dtype=float)
+                radius = float(obstacle.radius)
+            else:
+                vertices = np.asarray(obstacle.vertices, dtype=float)
+                center = np.mean(vertices, axis=0)
+                radius = float(np.max(np.linalg.norm(vertices - center, axis=1))) if len(vertices) else 0.0
+            hazards.append((center, radius))
+        return hazards
+
+    def _dynamic_hazard_descriptors(self) -> list[tuple[np.ndarray, float]]:
+        return [
+            (target.initial_state.position(), 0.6 * self.config.safety_clearance)
+            for target in self.scenario.target_ships
+        ]
+
+    def heuristic_seed_vectors(
+        self,
+        max_count: int,
+        *,
+        offset_scale: float = 1.0,
+    ) -> np.ndarray:
+        """Generate scenario-aware warm-start routes that explicitly include safe detours."""
+
+        if max_count <= 0:
+            return np.zeros((0, self.n_var), dtype=float)
+
+        start, goal, direction, normal, length, fractions, base_points = self._route_geometry()
+        if self.n_waypoints == 0:
+            return np.zeros((0, self.n_var), dtype=float)
+
+        route = goal - start
+        cruise_speed = float(np.mean(self.config.speed_bounds))
+        safety = float(self.config.safety_clearance) * max(float(offset_scale), 0.1)
+        envelope = np.sin(np.pi * fractions)
+
+        static_hazards = self._static_hazard_descriptors()
+        dynamic_hazards = self._dynamic_hazard_descriptors()
+        hazard_side_balance = 0.0
+        for center, _radius in static_hazards + dynamic_hazards:
+            hazard_side_balance += float(np.dot(np.asarray(center, dtype=float) - start, normal))
+        preferred_signs = (-1.0, 1.0) if hazard_side_balance > 0.0 else (1.0, -1.0)
+
+        seeds: list[np.ndarray] = []
+        seen: set[bytes] = set()
+
+        def add_seed(points: np.ndarray, speed_scale: float = 1.0) -> None:
+            speeds = np.full(self.n_waypoints, cruise_speed * speed_scale, dtype=float)
+            vector = self._encode_seed_vector(points, speeds)
+            key = self._cache_key(vector)
+            if key not in seen:
+                seen.add(key)
+                seeds.append(vector)
+
+        add_seed(base_points, speed_scale=1.0)
+
+        corridor_amplitudes = safety * np.array([0.85, 1.35, 1.9], dtype=float)
+        for sign in preferred_signs:
+            for amplitude in corridor_amplitudes:
+                shifted = base_points + np.outer(envelope, normal * sign * amplitude)
+                speed_scale = 0.96 if amplitude < corridor_amplitudes[-1] else 0.92
+                add_seed(shifted, speed_scale=speed_scale)
+                if len(seeds) >= max_count:
+                    return np.asarray(seeds[:max_count], dtype=float)
+
+        def hazard_order_key(item: tuple[np.ndarray, float]) -> tuple[float, float]:
+            center, _radius = item
+            rel = np.asarray(center, dtype=float) - start
+            progress = float(np.dot(rel, direction) / max(length, 1e-9))
+            projected = start + np.clip(progress, 0.0, 1.0) * route
+            lateral = float(np.linalg.norm(np.asarray(center, dtype=float) - projected))
+            return lateral, abs(progress - 0.5)
+
+        for center, radius in sorted(static_hazards + dynamic_hazards, key=hazard_order_key)[:3]:
+            rel = np.asarray(center, dtype=float) - start
+            progress = float(np.clip(np.dot(rel, direction) / max(length, 1e-9), 0.05, 0.95))
+            local_envelope = np.exp(-((fractions - progress) ** 2) / 0.03)
+            local_offset = max(radius + 0.9 * safety, 1.1 * safety)
+            nearest_idx = int(np.argmin(np.abs(fractions - progress)))
+            for sign in preferred_signs:
+                guided = base_points + np.outer(local_envelope, normal * sign * local_offset)
+                guided[nearest_idx] = np.asarray(center, dtype=float) + normal * sign * local_offset
+                add_seed(guided, speed_scale=0.9)
+                if len(seeds) >= max_count:
+                    return np.asarray(seeds[:max_count], dtype=float)
+
+        return np.asarray(seeds[:max_count], dtype=float)
 
     def decode(self, decision_vector: Sequence[float]) -> Tuple[List[np.ndarray], List[float]]:
         vector = np.asarray(decision_vector, dtype=float)
@@ -186,9 +315,6 @@ class ShipTrajectoryProblem:
         cv = (
             bounds_penalty
             + safety_penalty
-            + terminal_fuel_penalty
-            + terminal_time_penalty
-            + terminal_risk_penalty
             + intrusion_penalty
         )
         return {
@@ -221,7 +347,6 @@ class ShipTrajectoryProblem:
         collision_risk = float(
             self.config.domain_risk_weight * float(risk.max_risk)
             + (1.0 - self.config.domain_risk_weight) * float(risk.mean_risk)
-            + penalties["terminal_risk_penalty"]
             + self.config.risk_safety_penalty_weight * penalties["safety_penalty"]
             + penalties["intrusion_penalty"]
         )
@@ -277,15 +402,15 @@ class ShipTrajectoryProblem:
             analysis_metrics=metrics,
         )
 
-    def simulate(self, decision_vector: Sequence[float]) -> EvaluationResult:
+    def simulate(self, decision_vector: Sequence[float], *, copy_result: bool = True) -> EvaluationResult:
         vector = np.asarray(decision_vector, dtype=float)
         clipped = np.clip(vector, self.var_bounds[:, 0], self.var_bounds[:, 1])
         bounds_penalty = float(np.linalg.norm(vector - clipped, ord=1) * self.config.penalty_out_of_bounds)
         cache_key = self._cache_key(clipped)
         if self.config.population_evaluation_cache:
-            cached = self._evaluation_cache.get(cache_key)
+            cached = self._cached_evaluation(cache_key, copy_result=copy_result)
             if cached is not None:
-                return _copy_evaluation_result(cached)
+                return cached
         waypoints, speeds = self.decode(clipped)
         own_trajectory = self.own_ship_model.simulate_route(
             initial_state=self.scenario.own_ship.initial_state,
@@ -297,7 +422,8 @@ class ShipTrajectoryProblem:
         if self.config.population_evaluation_cache:
             self._evaluation_cache[cache_key] = _copy_evaluation_result(result)
             self._objective_cache[cache_key] = np.append(result.objectives, result.analysis_metrics.get("cv", 0.0)).copy()
-        return result
+            return self._cached_evaluation(cache_key, copy_result=copy_result) or result
+        return _copy_evaluation_result(result) if copy_result else result
 
     def _cache_key(self, decision_vector: Sequence[float]) -> bytes:
         clipped = np.clip(np.asarray(decision_vector, dtype=float), self.var_bounds[:, 0], self.var_bounds[:, 1])
@@ -336,6 +462,32 @@ class ShipTrajectoryProblem:
             inverse[idx] = mapped
         unique_objectives = np.vstack([self.evaluate(individual) for individual in unique_vectors])
         return unique_objectives[inverse]
+
+    def simulate_population(
+        self,
+        population: np.ndarray,
+        *,
+        copy_results: bool = True,
+    ) -> list[EvaluationResult]:
+        pop = np.atleast_2d(np.asarray(population, dtype=float))
+        if len(pop) == 0:
+            return []
+        if not self.config.population_evaluation_cache:
+            return [self.simulate(individual, copy_result=copy_results) for individual in pop]
+
+        inverse = np.zeros(len(pop), dtype=int)
+        unique_vectors: list[np.ndarray] = []
+        key_to_index: dict[bytes, int] = {}
+        for idx, individual in enumerate(pop):
+            key = self._cache_key(individual)
+            mapped = key_to_index.get(key)
+            if mapped is None:
+                mapped = len(unique_vectors)
+                key_to_index[key] = mapped
+                unique_vectors.append(np.asarray(individual, dtype=float))
+            inverse[idx] = mapped
+        unique_results = [self.simulate(individual, copy_result=copy_results) for individual in unique_vectors]
+        return [unique_results[idx] for idx in inverse]
 
     def describe(self) -> Dict[str, object]:
         return {

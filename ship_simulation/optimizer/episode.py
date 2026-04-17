@@ -481,14 +481,14 @@ class RollingHorizonPlanner:
         decisions = rng.uniform(lower, upper, size=(self.demo_config.random_search_samples, context.n_var))
         decisions[0] = context.initial_guess
         fitness = context.evaluate_population(decisions)
-        evaluations = [interface.simulate(individual) for individual in decisions]
+        evaluations = interface.simulate_population(decisions, copy_results=False)
         best_idx = select_representative_index(
             fitness[:, :3],
             evaluations,
             self.config.objective_weights,
             safety_clearance=self.config.safety_clearance,
         )
-        best_evaluation = evaluations[best_idx]
+        best_evaluation = interface.simulate(decisions[best_idx])
         pareto_idx = self._nondominated_indices(fitness[:, :3])
         return EvolutionaryOptimizationResult(
             best_decision=decisions[best_idx].copy(),

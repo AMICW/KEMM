@@ -782,13 +782,21 @@ ship 主线并没有重新发明一套算法，而是通过 `ship_simulation/opt
 
 1. 用 ship 问题的 `evaluate_population` 代替 benchmark 目标函数
 2. 用 ship 问题的变量边界替代 benchmark 的边界
-3. 注入直线初始解，帮助种群更快进入可行区域
-4. 关闭 benchmark-aware prior
+3. 注入直线初始解与场景感知绕行初始候选，帮助种群更快进入“安全且能推进”的区域
+4. 将 ship 场景里的 terminal progress 留在 `fuel/time` 维度，不再混入 `risk` 目标
+5. 将 ship 侧约束违背度收敛为 `bounds + safety + intrusion` 语义
+6. 关闭 benchmark-aware prior
 
 因此可以把当前项目理解成：
 
 - `kemm/` 负责通用算法核心
 - `ship_simulation/` 负责真实应用问题壳层
+
+这里要特别强调一个边界：
+
+- `heuristic detour seeds` 属于 ship 实例化层，不是 benchmark 主线的通用结构先验
+- 它们的作用是给物理场景提供安全绕行 warm start，而不是修改 KEMM 的四机制主架构
+- 因此论文里可以写成“在 ship 场景中，KEMM 叠加了场景感知初始候选注入机制”，不要写成“通用 KEMM 必然包含该模块”
 
 ---
 

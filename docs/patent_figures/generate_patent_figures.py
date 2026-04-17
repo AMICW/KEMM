@@ -134,47 +134,49 @@ FIGURE_DOCS = {
         "refs": ["本目录全部图稿", "../patent_figures_plan_ship_kemm.md"],
     },
     "fig01_system_architecture": {
-        "summary": "该图展示发明的总体系统架构，回答“系统由哪些输入、模块和输出组成”，是整套方法的总览图。",
+        "summary": "该图展示发明的总体系统架构，回答“系统由哪些输入、模块和输出组成”，同时明确 ship 实施方式中场景感知绕行初值与统一候选竞争的关系，是整套方法的总览图。",
         "meaning": [
             "左侧输入层对应真实船舶规划环境中的四类原始信息：本船、目标船、障碍物和环境场。",
-            "中部处理层说明 KEMM 不是单一算子，而是由建模、诊断、分配、四类知识模块、候选池和环境选择组成的完整决策链。",
+            "中部处理层说明 KEMM 不是单一算子，而是由建模、诊断、分配、四类知识模块、场景感知绕行初值和候选池竞争组成的完整决策链。",
             "右侧输出层说明系统最终不是只输出一个抽象评分，而是输出轨迹解集、代表轨迹和可执行控制结果。",
-            "底部反馈回路强调该方法运行在滚动重规划闭环中，而不是一次性静态求解。",
+            "底部反馈回路强调该方法运行在滚动重规划闭环中，而不是一次性静态求解；其中风险维表达沿轨迹安全暴露，终端推进由 fuel/time 维和代表解排序共同承担。",
         ],
         "elements": [
             "输入对象 `210/220/230/240`",
             "核心模块 `100 -> 110 -> 120 -> 130`",
             "并联机制模块 `140/150/160/170`",
             "候选池与选择模块 `180/190`，以及执行模块 `200`",
+            "场景感知绕行初值的说明文字，用于交代 ship 实施方式中的 warm-start 注入位置",
             "输出对象 `250/260/290` 和执行反馈回路",
             "论文版默认隐藏构件号，专利黑白版保留构件号",
         ],
         "reading": [
             "从左到右读：先看环境数据进入 `100` 和 `110`，再看 `120/130` 如何触发多源知识机制。",
-            "再看中下部：`140-170` 只是并行生成候选，不直接决定最终轨迹。",
+            "再看中下部：`140-170` 只是并行生成候选，不直接决定最终轨迹；ship 场景中的绕行初值也在这一阶段并入候选池。",
             "最后看右侧：真正输出由 `180/190/200` 这一统一竞争与执行链给出。",
         ],
         "usage": "论文中适合作为方法总览图；专利中适合作为装置实施方式和系统总体架构图，也是摘要附图备选。",
         "refs": ["../patent_specification_ship_kemm_draft.md", "../patent_figures_plan_ship_kemm.md"],
     },
     "fig02_method_flow": {
-        "summary": "该图展示方法执行顺序，回答“系统实际是按什么步骤运行的”，是主权项最直接的图示表达。",
+        "summary": "该图展示方法执行顺序，回答“系统实际是按什么步骤运行的”，并补充说明 ship 实施方式中启发式绕行初值如何插入主流程，是主权项最直接的图示表达。",
         "meaning": [
             "上排步骤说明问题是如何从动态环境数据开始，被转化为可求解的动态多目标轨迹优化问题。",
-            "中排步骤说明环境变化后，KEMM 不会固定地只做一种恢复，而是按比例调度多种候选来源。",
-            "下排步骤说明最终是通过统一候选池与约束支配环境选择得到代表轨迹并执行。",
+            "中排步骤说明环境变化后，KEMM 不会固定地只做一种恢复，而是按比例调度多种候选来源，并可叠加场景感知绕行初值。",
+            "下排步骤说明最终是通过统一候选池与约束支配环境选择得到代表轨迹并执行；终端推进不足不再伪装成风险，而是通过 fuel/time 与代表解排序体现。",
             "虚线回路说明执行后的状态会回到下一规划周期，形成持续闭环。",
         ],
         "elements": [
             "步骤 `S100-S1100`",
             "从 `S500` 发散到 `S600/S700/S800` 的分支箭头",
             "`S900` 候选池、`S1000` 环境选择、`S1100` 滚动重规划",
+            "候选生成阶段对绕行初值注入策略的说明文字",
             "从 `S1100` 返回 `S100` 的循环虚线",
             "论文版默认隐藏步骤编号，专利黑白版保留步骤编号",
         ],
         "reading": [
             "先横向看上排：建立动态问题和环境变化信息。",
-            "再看从 `S500` 向下发散的三条线，理解预算分配后并行生成候选的逻辑。",
+            "再看从 `S500` 向下发散的三条线，理解预算分配后并行生成候选的逻辑，以及绕行初值如何与这些候选一并汇入候选池。",
             "最后看下排和底部虚线，理解“统一筛选 + 局部执行 + 再规划”的闭环。",
         ],
         "usage": "这是最适合放在摘要页和专利摘要附图位置的一张图；论文里也可以作为方法章节第一张图。",
@@ -635,7 +637,7 @@ def draw_fig01_system_architecture(theme: Theme):
     add_heading(
         ax,
         "图1 本发明总体系统框图",
-        "面向动态航行环境的数据输入先进入建模与变化响应主链，再由多源知识模块提名候选并通过统一竞争得到轨迹解集、代表轨迹与控制结果。",
+        "面向动态航行环境的数据输入先进入建模与变化响应主链，再由多源知识模块与场景感知绕行初值共同提名候选，并通过统一竞争得到轨迹解集、代表轨迹与控制结果。",
         theme,
     )
 
@@ -710,7 +712,8 @@ def draw_fig01_system_architecture(theme: Theme):
     for _, _, x in modules:
         add_arrow(ax, (x + 0.05, 0.40), (x + 0.05, 0.34), theme, color=theme.secondary_accent if not theme.is_bw else theme.border, lw=0.9)
     add_elbow_arrow(ax, (0.50, 0.34), (0.445, 0.28), theme, mode="hv", mid=0.445, color=theme.secondary_accent if not theme.is_bw else theme.border, lw=0.9)
-    ax.text(0.53, 0.313, "并行提名候选后统一汇聚", fontsize=CAPTION_FONT, color=theme.muted_text, ha="center")
+    ax.text(0.53, 0.313, "并行提名候选并与绕行初值统一汇聚", fontsize=CAPTION_FONT, color=theme.muted_text, ha="center")
+    ax.text(0.74, 0.355, "ship实施时可注入\n场景感知绕行初值", fontsize=CAPTION_FONT, color=theme.muted_text, ha="center")
 
     # Selection and execution.
     add_arrow(ax, (0.52, 0.23), (0.57, 0.23), theme, lw=0.9)
@@ -723,7 +726,7 @@ def draw_fig01_system_architecture(theme: Theme):
     add_arrow(ax, (0.555, 0.05), (0.555, 0.025), theme, text="执行反馈", text_offset=(0.06, 0.0), lw=0.9)
     add_arrow(ax, (0.555, 0.025), (0.41, 0.08), theme, rad=-0.30, color=theme.guide, linestyle="--", lw=0.9)
 
-    ax.text(0.52, 0.012, "核心逻辑：先建模并诊断变化，再调度记忆 / 预测 / 迁移 / 探索，统一进入候选池后由环境选择收束。", fontsize=CAPTION_FONT, color=theme.muted_text, ha="center")
+    ax.text(0.52, 0.012, "核心逻辑：先建模并诊断变化，再调度记忆 / 预测 / 迁移 / 探索并融合绕行初值；风险维表达安全暴露，终端推进由 fuel/time 与代表解排序体现。", fontsize=CAPTION_FONT, color=theme.muted_text, ha="center")
     return fig
 
 
@@ -732,7 +735,7 @@ def draw_fig02_method_flow(theme: Theme):
     add_heading(
         ax,
         "图2 本发明方法流程图",
-        "主流程覆盖数据获取、建模、环境变化响应、候选池筛选和滚动重规划执行，可直接作为摘要附图使用。",
+        "主流程覆盖数据获取、建模、环境变化响应、绕行初值注入、候选池筛选和滚动重规划执行，可直接作为摘要附图使用。",
         theme,
     )
 
@@ -754,7 +757,7 @@ def draw_fig02_method_flow(theme: Theme):
         "S200": "构建动态多目标\n轨迹优化模型",
         "S300": "归档当前环境\n精英信息",
         "S400": "确定环境变化\n信息",
-        "S500": "确定候选数量\n分配比例",
+        "S500": "确定候选预算与\n启发式注入策略",
         "S600": "生成记忆候选",
         "S700": "生成预测候选",
         "S800": "生成迁移候选",
@@ -777,7 +780,7 @@ def draw_fig02_method_flow(theme: Theme):
     }
 
     add_group_label(ax, 0.03, 0.66, 0.92, 0.20, "问题建模与变化诊断", theme)
-    add_group_label(ax, 0.12, 0.36, 0.74, 0.18, "多源候选生成", theme)
+    add_group_label(ax, 0.12, 0.36, 0.74, 0.18, "多源候选与启发式初值", theme)
     add_group_label(ax, 0.28, 0.11, 0.65, 0.18, "统一筛选与滚动执行", theme)
 
     for key, (x, y) in positions.items():
@@ -793,7 +796,7 @@ def draw_fig02_method_flow(theme: Theme):
     ax.plot([0.22, 0.87], [0.58, 0.58], color=bus_color, linewidth=1.0, solid_capstyle="round")
     for end_x in (0.22, 0.48, 0.74):
         add_arrow(ax, (end_x, 0.58), (end_x, 0.53), theme, color=bus_color)
-    ax.text(0.89, 0.62, "记忆 / 预测 /\n迁移 / 重初始化\n按比例调度", ha="center", va="center", fontsize=CAPTION_FONT, color=theme.muted_text)
+    ax.text(0.89, 0.62, "记忆 / 预测 /\n迁移 / 重初始化\n与绕行初值协同调度", ha="center", va="center", fontsize=CAPTION_FONT, color=theme.muted_text)
 
     merge_color = theme.secondary_accent if not theme.is_bw else theme.border
     ax.plot([0.22, 0.74], [0.34, 0.34], color=merge_color, linewidth=1.0, solid_capstyle="round")
@@ -815,7 +818,7 @@ def draw_fig02_method_flow(theme: Theme):
         color=theme.muted_text,
         ha="right",
     )
-    ax.text(0.05, 0.08, "核心逻辑：先诊断环境变化，再按比例生成多类候选，最后统一筛选并执行局部前段。", fontsize=CAPTION_FONT, color=theme.muted_text)
+    ax.text(0.05, 0.08, "核心逻辑：先诊断环境变化，再融合绕行初值与多源候选，最后以约束优先完成筛选并执行局部前段。", fontsize=CAPTION_FONT, color=theme.muted_text)
     return fig
 
 

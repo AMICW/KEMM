@@ -47,19 +47,18 @@
 2. [figure_catalog.md](figure_catalog.md)
 3. [run_commands.md](run_commands.md)
 
-### 6. 我在整理专利材料
+### 6. 我想同步最新算法结构变更
 
-核心文档：
+按这个顺序：
 
-- [patent_disclosure_ship_kemm.md](patent_disclosure_ship_kemm.md)
-- [patent_specification_ship_kemm_draft.md](patent_specification_ship_kemm_draft.md)
-- [patent_claims_ship_kemm_final.md](patent_claims_ship_kemm_final.md)
-- [patent_abstract_ship_kemm_draft.md](patent_abstract_ship_kemm_draft.md)
-- [patent_figures_plan_ship_kemm.md](patent_figures_plan_ship_kemm.md)
-- [patent_claim_support_matrix_ship_kemm.md](patent_claim_support_matrix_ship_kemm.md)
-- [patent_embodiment_tables_ship_kemm.md](patent_embodiment_tables_ship_kemm.md)
-- [patent_completeness_checklist.md](patent_completeness_checklist.md)
-- [patent_figures/README.md](patent_figures/README.md)
+1. [ship_simulation_reference.md](ship_simulation_reference.md)（三阶段报告、cache、profile 机制）
+2. [ship_experiment_playbook.md](ship_experiment_playbook.md)（`full_tuned`、严格可比、统计和鲁棒性口径）
+3. [visualization_guide.md](visualization_guide.md)（当前默认图包与新增报告产物）
+4. [figure_catalog.md](figure_catalog.md)（每张图的论文叙事与图注模板）
+
+### 7. 我在整理专利材料
+
+专利文本已迁移到本地私有目录 `/.private/patent_ship_kemm/`，并已通过 `.gitignore` 排除。公开仓库只保留占位说明，不再保存专利正文、摘要、权利要求或图稿说明文本。
 
 ## 按主题分类
 
@@ -90,11 +89,7 @@
 
 ### 专利与附图
 
-- [patent_disclosure_ship_kemm.md](patent_disclosure_ship_kemm.md)：技术交底书
-- [patent_specification_ship_kemm_draft.md](patent_specification_ship_kemm_draft.md)：说明书初稿
-- [patent_claims_ship_kemm_final.md](patent_claims_ship_kemm_final.md)：权利要求终稿候选
-- [patent_figures_plan_ship_kemm.md](patent_figures_plan_ship_kemm.md)：专利附图方案
-- [patent_figures/README.md](patent_figures/README.md)：专利图稿和图义说明
+专利相关正文、摘要、权利要求和图稿说明已迁移到本地私有目录 `/.private/patent_ship_kemm/`，公开仓库不再提供这些文本的导航链接。
 
 ## 推荐阅读路径
 
@@ -120,10 +115,7 @@
 
 ### 整理专利
 
-1. [patent_disclosure_ship_kemm.md](patent_disclosure_ship_kemm.md)
-2. [patent_specification_ship_kemm_draft.md](patent_specification_ship_kemm_draft.md)
-3. [patent_claims_ship_kemm_final.md](patent_claims_ship_kemm_final.md)
-4. [patent_figures/README.md](patent_figures/README.md)
+1. 本地私有目录 `/.private/patent_ship_kemm/`
 
 ## 维护约定
 

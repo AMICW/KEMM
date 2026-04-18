@@ -24,7 +24,9 @@ import time
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import asdict, is_dataclass, replace
+import hashlib
+import json
 from pathlib import Path
 from typing import Dict, List
 
@@ -42,7 +44,7 @@ from kemm.algorithms import (
 )
 from kemm.benchmark import DynamicTestProblems, PerformanceMetrics
 from kemm.core.types import ExperimentConfig as SharedExperimentConfig
-from kemm.core.types import KEMMConfig as RuntimeKEMMConfig
+from kemm.core.types import KEMMChangeDiagnostics, KEMMConfig as RuntimeKEMMConfig
 from kemm.reporting import build_report_paths, export_benchmark_report
 from reporting_config import build_benchmark_plot_config
 
@@ -60,6 +62,8 @@ os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 
 _SHARED_EXPERIMENT_DEFAULTS = SharedExperimentConfig()
+CACHE_SCHEMA_VERSION = "benchmark-task-cache-v1"
+_BENCHMARK_TASK_CACHE_DIR = Path("benchmark_outputs") / "_cache" / "benchmark_tasks"
 
 
 @contextmanager
@@ -88,6 +92,163 @@ def _benchmark_config_snapshot(cfg: "ExperimentConfig") -> dict[str, object]:
         "GENS_PER_CHANGE": int(getattr(cfg, "GENS_PER_CHANGE")),
         "KEMM_CONFIG": replace(getattr(cfg, "KEMM_CONFIG", RuntimeKEMMConfig())) if getattr(cfg, "KEMM_CONFIG", None) is not None else RuntimeKEMMConfig(),
     }
+
+
+def _json_ready(value):
+    if is_dataclass(value):
+        return _json_ready(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): _json_ready(val) for key, val in sorted(value.items(), key=lambda item: str(item[0]))}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return np.asarray(value).tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, type):
+        return f"{value.__module__}.{value.__qualname__}"
+    return value
+
+
+def _problem_aux_snapshot(problem_suite: DynamicTestProblems, pof_func, *, n_changes: int, gens_per_change: int) -> dict[str, object]:
+    generation = 0
+    times: list[float] = []
+    true_pof_series: list[list[list[float]]] = []
+    for _change_index in range(int(n_changes)):
+        t = float(problem_suite.get_time(generation))
+        times.append(t)
+        try:
+            true_pof = pof_func(t=t)
+        except TypeError:
+            true_pof = pof_func()
+        true_pof_series.append(np.asarray(true_pof, dtype=float).tolist())
+        generation += int(gens_per_change)
+    return {"times": times, "true_pof_series": true_pof_series}
+
+
+def _ensure_problem_aux(
+    resource: dict[str, object],
+    *,
+    n_changes: int,
+    gens_per_change: int,
+) -> dict[str, object]:
+    problem_aux = resource.get("problem_aux")
+    if problem_aux is None:
+        problem_aux = _problem_aux_snapshot(
+            resource["problem_suite"],
+            resource["pof_func"],
+            n_changes=n_changes,
+            gens_per_change=gens_per_change,
+        )
+        resource["problem_aux"] = problem_aux
+    return dict(problem_aux)
+
+
+def _benchmark_algo_snapshot(algo_name: str, algo_spec) -> dict[str, object]:
+    if isinstance(algo_spec, dict):
+        return {
+            "algo_name": str(algo_name),
+            "algorithm": _json_ready(algo_spec.get("algorithm", KEMM_DMOEA_Improved)),
+            "config_overrides": _json_ready(dict(algo_spec.get("config_overrides", {}))),
+            "benchmark_aware_prior": bool(algo_spec.get("benchmark_aware_prior", True)),
+            "ablation_variant": str(algo_name) if str(algo_name).startswith("KEMM-") else None,
+        }
+    return {
+        "algo_name": str(algo_name),
+        "algorithm": _json_ready(algo_spec),
+        "config_overrides": {},
+        "benchmark_aware_prior": True,
+        "ablation_variant": None,
+    }
+
+
+def _benchmark_task_cache_key(task: dict[str, object]) -> str:
+    payload = {
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "cfg_snapshot": _json_ready(task["cfg_snapshot"]),
+        "algo_spec": _benchmark_algo_snapshot(str(task["algo_name"]), task["algo_spec"]),
+        "problem": str(task["prob_name"]),
+        "run": int(task["run"]),
+        "setting": str(task["setting_key"]),
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _benchmark_task_cache_path(task: dict[str, object]) -> Path:
+    root = Path(str(task.get("cache_dir") or _BENCHMARK_TASK_CACHE_DIR))
+    key = _benchmark_task_cache_key(task)
+    return root / key[:2] / f"{key}.json"
+
+
+def _serialize_change_diagnostics(history) -> list[dict[str, object]]:
+    payload: list[dict[str, object]] = []
+    for item in history or []:
+        if isinstance(item, KEMMChangeDiagnostics):
+            payload.append(_json_ready(asdict(item)))
+        elif isinstance(item, dict):
+            payload.append(_json_ready(item))
+    return payload
+
+
+def _restore_change_diagnostics(history) -> list[KEMMChangeDiagnostics]:
+    restored: list[KEMMChangeDiagnostics] = []
+    for item in history or []:
+        if isinstance(item, KEMMChangeDiagnostics):
+            restored.append(item)
+        elif isinstance(item, dict):
+            restored.append(KEMMChangeDiagnostics(**item))
+    return restored
+
+
+def _write_benchmark_task_cache(path: Path, result: dict[str, object]) -> None:
+    payload = {
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "result": {
+            "setting_key": str(result["setting_key"]),
+            "algo_name": str(result["algo_name"]),
+            "prob_name": str(result["prob_name"]),
+            "run": int(result["run"]),
+            "migd": float(result["migd"]),
+            "sp": float(result["sp"]),
+            "ms": float(result["ms"]),
+            "time": float(result["time"]),
+            "igd_curve": [float(value) for value in result["igd_curve"]],
+            "hv_curve": [float(value) for value in result["hv_curve"]],
+            "change_diagnostics": _serialize_change_diagnostics(result["change_diagnostics"]),
+            "nt": int(result["nt"]),
+            "tau_t": int(result["tau_t"]),
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _load_benchmark_task_cache(path: Path) -> dict[str, object] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if str(payload.get("schema_version")) != CACHE_SCHEMA_VERSION:
+        return None
+    result = dict(payload.get("result") or {})
+    if not result:
+        return None
+    result["migd"] = float(result["migd"])
+    result["sp"] = float(result["sp"])
+    result["ms"] = float(result["ms"])
+    result["time"] = float(result["time"])
+    result["run"] = int(result["run"])
+    result["nt"] = int(result["nt"])
+    result["tau_t"] = int(result["tau_t"])
+    result["igd_curve"] = [float(value) for value in result.get("igd_curve", [])]
+    result["hv_curve"] = [float(value) for value in result.get("hv_curve", [])]
+    result["change_diagnostics"] = _restore_change_diagnostics(result.get("change_diagnostics", []))
+    return result
 
 
 def _instantiate_algorithm_from_snapshot(cfg_snapshot: dict[str, object], algo_spec, lb: np.ndarray, ub: np.ndarray):
@@ -122,11 +283,30 @@ def _instantiate_algorithm_from_snapshot(cfg_snapshot: dict[str, object], algo_s
 
 
 def _run_benchmark_case(task: dict[str, object]) -> dict[str, object]:
+    cache_enabled = bool(task.get("cache_enabled", False))
+    force_rerun = bool(task.get("force_rerun", False))
+    cache_path = _benchmark_task_cache_path(task)
+    if cache_enabled and not force_rerun:
+        cached = _load_benchmark_task_cache(cache_path)
+        if cached is not None:
+            cached["cache_hit"] = True
+            return cached
+
     cfg_snapshot = dict(task["cfg_snapshot"])
     nt = int(task["nt"])
     tau_t = int(task["tau_t"])
     problem_suite = DynamicTestProblems(nt=nt, tau_t=tau_t)
     obj_func, pof_func = problem_suite.get_problem(str(task["prob_name"]))
+    problem_aux = dict(task.get("problem_aux") or {})
+    if not problem_aux:
+        problem_aux = _problem_aux_snapshot(
+            problem_suite,
+            pof_func,
+            n_changes=int(cfg_snapshot["N_CHANGES"]),
+            gens_per_change=int(cfg_snapshot["GENS_PER_CHANGE"]),
+        )
+    precomputed_times = [float(value) for value in problem_aux.get("times", [])]
+    precomputed_true_pofs = [np.asarray(points, dtype=float) for points in problem_aux.get("true_pof_series", [])]
 
     n_var = int(cfg_snapshot["N_VAR"])
     lb = np.zeros(n_var)
@@ -147,7 +327,10 @@ def _run_benchmark_case(task: dict[str, object]) -> dict[str, object]:
         metrics = PerformanceMetrics()
 
         for change_index in range(int(cfg_snapshot["N_CHANGES"])):
-            t = problem_suite.get_time(generation)
+            if change_index < len(precomputed_times):
+                t = precomputed_times[change_index]
+            else:
+                t = problem_suite.get_time(generation)
 
             if change_index == 0:
                 algo.fitness = algo.evaluate(algo.population, obj_func, t)
@@ -160,10 +343,13 @@ def _run_benchmark_case(task: dict[str, object]) -> dict[str, object]:
             generation += int(cfg_snapshot["GENS_PER_CHANGE"])
             obtained = algo.get_pareto_front()
 
-            try:
-                true_pof = pof_func(t=t)
-            except TypeError:
-                true_pof = pof_func()
+            if change_index < len(precomputed_true_pofs):
+                true_pof = precomputed_true_pofs[change_index]
+            else:
+                try:
+                    true_pof = pof_func(t=t)
+                except TypeError:
+                    true_pof = pof_func()
             ref_point = np.max(np.vstack([true_pof, obtained]), axis=0) + 0.1
 
             igd_list.append(metrics.igd(obtained, true_pof))
@@ -171,7 +357,7 @@ def _run_benchmark_case(task: dict[str, object]) -> dict[str, object]:
             sp_list.append(metrics.spacing(obtained))
             ms_list.append(metrics.maximum_spread(obtained, true_pof))
 
-    return {
+    result = {
         "setting_key": str(task["setting_key"]),
         "algo_name": str(task["algo_name"]),
         "prob_name": str(task["prob_name"]),
@@ -186,6 +372,10 @@ def _run_benchmark_case(task: dict[str, object]) -> dict[str, object]:
         "nt": nt,
         "tau_t": tau_t,
     }
+    if cache_enabled:
+        _write_benchmark_task_cache(cache_path, result)
+    result["cache_hit"] = False
+    return result
 
 
 class ExperimentConfig:
@@ -238,6 +428,9 @@ class ExperimentConfig:
     ABLATION_BENCHMARK_PRIOR = False
     KEMM_CONFIG = RuntimeKEMMConfig()
     MAX_WORKERS = 1
+    CACHE_ENABLED = False
+    FORCE_RERUN = False
+    CACHE_DIR = str(_BENCHMARK_TASK_CACHE_DIR)
 
     def __init__(self):
         self.POP_SIZE = int(self.__class__.POP_SIZE)
@@ -265,6 +458,9 @@ class ExperimentConfig:
         self.ABLATION_BENCHMARK_PRIOR = bool(self.__class__.ABLATION_BENCHMARK_PRIOR)
         self.KEMM_CONFIG = replace(self.__class__.KEMM_CONFIG)
         self.MAX_WORKERS = int(self.__class__.MAX_WORKERS)
+        self.CACHE_ENABLED = bool(self.__class__.CACHE_ENABLED)
+        self.FORCE_RERUN = bool(self.__class__.FORCE_RERUN)
+        self.CACHE_DIR = str(self.__class__.CACHE_DIR)
 
 
 class ExperimentRunner:
@@ -287,6 +483,8 @@ class ExperimentRunner:
         self.algorithm_diagnostics: Dict[str, Dict[str, List[list]]] = {}
         self.ablation_setting_results: Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]] = {}
         self.ablation_results: Dict[str, Dict[str, Dict[str, List[float]]]] = {}
+        self.task_cache_hits = 0
+        self.task_cache_misses = 0
 
     @staticmethod
     def _setting_key(setting: tuple[int, int]) -> str:
@@ -370,6 +568,60 @@ class ExperimentRunner:
         if collect_diagnostics:
             setting_diagnostics[setting_key][algo_name][prob_name].append(list(result["change_diagnostics"]))
 
+    def _cache_enabled(self) -> bool:
+        return bool(getattr(self.cfg, "CACHE_ENABLED", False))
+
+    def _force_rerun(self) -> bool:
+        return bool(getattr(self.cfg, "FORCE_RERUN", False))
+
+    def _cache_dir(self) -> str:
+        return str(getattr(self.cfg, "CACHE_DIR", _BENCHMARK_TASK_CACHE_DIR))
+
+    def _run_cached_serial_task(self, task: dict[str, object], resource: dict[str, object]) -> dict[str, object]:
+        cache_enabled = self._cache_enabled()
+        force_rerun = self._force_rerun()
+        cache_path = _benchmark_task_cache_path(task)
+        if cache_enabled and not force_rerun:
+            cached = _load_benchmark_task_cache(cache_path)
+            if cached is not None:
+                cached["cache_hit"] = True
+                return cached
+
+        problem_suite = resource["problem_suite"]
+        obj_func = resource["obj_func"]
+        pof_func = resource["pof_func"]
+        with _temporary_numpy_seed(int(task["run_seed"])):
+            result = self._run_single(
+                task["algo_spec"],
+                obj_func,
+                pof_func,
+                problem_suite=problem_suite,
+                precomputed_aux=_ensure_problem_aux(
+                    resource,
+                    n_changes=self.cfg.N_CHANGES,
+                    gens_per_change=self.cfg.GENS_PER_CHANGE,
+                ),
+            )
+        serial_result = {
+            "setting_key": str(task["setting_key"]),
+            "algo_name": str(task["algo_name"]),
+            "prob_name": str(task["prob_name"]),
+            "run": int(task["run"]),
+            "migd": float(result["migd"]),
+            "sp": float(result["sp"]),
+            "ms": float(result["ms"]),
+            "time": float(result["time"]),
+            "igd_curve": list(result["igd_curve"]),
+            "hv_curve": list(result["hv_curve"]),
+            "change_diagnostics": list(result["change_diagnostics"]),
+            "nt": int(task["nt"]),
+            "tau_t": int(task["tau_t"]),
+            "cache_hit": False,
+        }
+        if cache_enabled:
+            _write_benchmark_task_cache(cache_path, serial_result)
+        return serial_result
+
     def _run_setting_sweep(
         self,
         algorithms: Dict[str, object],
@@ -383,66 +635,35 @@ class ExperimentRunner:
         setting_hv_curves: Dict[str, Dict[str, Dict[str, List[List[float]]]]] = {}
         setting_diagnostics: Dict[str, Dict[str, Dict[str, List[list]]]] = {}
         configured_workers = max(1, int(getattr(self.cfg, "MAX_WORKERS", 1)))
-
-        if configured_workers <= 1:
-            total = len(self.cfg.SETTINGS) * len(algorithms) * len(self.cfg.PROBLEMS) * self.cfg.N_RUNS
-            counter = 0
-            t_start = time.time()
-            for setting in self.cfg.SETTINGS:
-                nt, tau_t = int(setting[0]), int(setting[1])
-                setting_key = self._setting_key((nt, tau_t))
-                problem_suite = DynamicTestProblems(nt=nt, tau_t=tau_t)
-                setting_results[setting_key] = self._initialize_metric_bucket(algorithms)
-                if collect_curves:
-                    setting_igd_curves[setting_key] = self._initialize_curve_bucket(algorithms)
-                    setting_hv_curves[setting_key] = self._initialize_curve_bucket(algorithms)
-                if collect_diagnostics:
-                    setting_diagnostics[setting_key] = self._initialize_curve_bucket(algorithms)
-
-                for algo_name, algo_spec in algorithms.items():
-                    for prob_name in self.cfg.PROBLEMS:
-                        obj_func, pof_func = problem_suite.get_problem(prob_name)
-                        for run in range(self.cfg.N_RUNS):
-                            counter += 1
-                            elapsed = time.time() - t_start
-                            rate = counter / (elapsed + 1e-6)
-                            eta = (total - counter) / (rate + 1e-6)
-                            print(
-                                f"\r  [{progress_prefix} {counter:4d}/{total}] ({nt:>2d},{tau_t:>2d}) "
-                                f"{algo_name:>16s}|{prob_name:>5s}|R{run+1} | "
-                                f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
-                                end="",
-                                flush=True,
-                            )
-                            seed_offset = sum((index + 1) * ord(ch) for index, ch in enumerate(f"{setting_key}:{algo_name}")) % 10000
-                            run_seed = run * 1000 + seed_offset
-                            with _temporary_numpy_seed(run_seed):
-                                result = self._run_single(algo_spec, obj_func, pof_func, problem_suite=problem_suite)
-                            metrics = setting_results[setting_key][algo_name][prob_name]
-                            metrics["MIGD"].append(result["migd"])
-                            metrics["SP"].append(result["sp"])
-                            metrics["MS"].append(result["ms"])
-                            metrics["TIME"].append(result["time"])
-                            if collect_curves:
-                                setting_igd_curves[setting_key][algo_name][prob_name].append(result["igd_curve"])
-                                setting_hv_curves[setting_key][algo_name][prob_name].append(result["hv_curve"])
-                            if collect_diagnostics:
-                                setting_diagnostics[setting_key][algo_name][prob_name].append(result["change_diagnostics"])
-
-            print(f"\n  完成, 总耗时 {time.time() - t_start:.1f}s")
-            return setting_results, setting_igd_curves, setting_hv_curves, setting_diagnostics
-
         tasks: list[dict[str, object]] = []
+        problem_resources: dict[tuple[str, str], dict[str, object]] = {}
+        tasks_by_problem: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+        needs_problem_aux: set[tuple[str, str]] = set()
         cfg_snapshot = _benchmark_config_snapshot(self.cfg)
+        canonical_key = self._canonical_setting_key()
+        self.task_cache_hits = 0
+        self.task_cache_misses = 0
         for setting in self.cfg.SETTINGS:
             nt, tau_t = int(setting[0]), int(setting[1])
             setting_key = self._setting_key((nt, tau_t))
             setting_results[setting_key] = self._initialize_metric_bucket(algorithms)
-            if collect_curves:
+            collect_curves_for_setting = collect_curves and setting_key == canonical_key
+            collect_diagnostics_for_setting = collect_diagnostics and setting_key == canonical_key
+            if collect_curves_for_setting:
                 setting_igd_curves[setting_key] = self._initialize_curve_bucket(algorithms)
                 setting_hv_curves[setting_key] = self._initialize_curve_bucket(algorithms)
-            if collect_diagnostics:
+            if collect_diagnostics_for_setting:
                 setting_diagnostics[setting_key] = self._initialize_curve_bucket(algorithms)
+
+            problem_suite = DynamicTestProblems(nt=nt, tau_t=tau_t)
+            for prob_name in self.cfg.PROBLEMS:
+                obj_func, pof_func = problem_suite.get_problem(prob_name)
+                problem_resources[(setting_key, prob_name)] = {
+                    "problem_suite": problem_suite,
+                    "obj_func": obj_func,
+                    "pof_func": pof_func,
+                    "problem_aux": None,
+                }
 
             for algo_name, algo_spec in algorithms.items():
                 for prob_name in self.cfg.PROBLEMS:
@@ -459,8 +680,28 @@ class ExperimentRunner:
                                 "prob_name": prob_name,
                                 "run": run,
                                 "run_seed": run * 1000 + seed_offset,
+                                "cache_enabled": self._cache_enabled(),
+                                "force_rerun": self._force_rerun(),
+                                "cache_dir": self._cache_dir(),
                             }
                         )
+                        tasks_by_problem[(setting_key, prob_name)].append(tasks[-1])
+                        if not self._cache_enabled() or self._force_rerun():
+                            needs_problem_aux.add((setting_key, prob_name))
+                        else:
+                            cache_path = _benchmark_task_cache_path(tasks[-1])
+                            if _load_benchmark_task_cache(cache_path) is None:
+                                needs_problem_aux.add((setting_key, prob_name))
+
+        for resource_key in needs_problem_aux:
+            resource = problem_resources[resource_key]
+            problem_aux = _ensure_problem_aux(
+                resource,
+                n_changes=self.cfg.N_CHANGES,
+                gens_per_change=self.cfg.GENS_PER_CHANGE,
+            )
+            for task in tasks_by_problem[resource_key]:
+                task["problem_aux"] = problem_aux
 
         total = len(tasks)
         counter = 0
@@ -468,23 +709,29 @@ class ExperimentRunner:
         actual_workers = max(1, min(configured_workers, total))
         if actual_workers <= 1:
             for task in tasks:
-                result = _run_benchmark_case(task)
+                resource = problem_resources[(str(task["setting_key"]), str(task["prob_name"]))]
+                result = self._run_cached_serial_task(task, resource)
                 counter += 1
+                if bool(result.get("cache_hit")):
+                    self.task_cache_hits += 1
+                else:
+                    self.task_cache_misses += 1
                 self._store_setting_outcome(
                     setting_results=setting_results,
                     setting_igd_curves=setting_igd_curves,
                     setting_hv_curves=setting_hv_curves,
                     setting_diagnostics=setting_diagnostics,
                     result=result,
-                    collect_curves=collect_curves,
-                    collect_diagnostics=collect_diagnostics,
+                    collect_curves=collect_curves and str(result["setting_key"]) == canonical_key,
+                    collect_diagnostics=collect_diagnostics and str(result["setting_key"]) == canonical_key,
                 )
                 elapsed = time.time() - t_start
                 rate = counter / (elapsed + 1e-6)
                 eta = (total - counter) / (rate + 1e-6)
+                cache_label = "hit" if bool(result.get("cache_hit")) else "run"
                 print(
                     f"\r  [{progress_prefix} {counter:4d}/{total}] ({int(result['nt']):>2d},{int(result['tau_t']):>2d}) "
-                    f"{str(result['algo_name']):>16s}|{str(result['prob_name']):>5s}|R{int(result['run'])+1} | "
+                    f"{str(result['algo_name']):>16s}|{str(result['prob_name']):>5s}|R{int(result['run'])+1} | {cache_label:>3s} | "
                     f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
                     end="",
                     flush=True,
@@ -497,21 +744,26 @@ class ExperimentRunner:
                     for future in as_completed(future_map):
                         result = future.result()
                         counter += 1
+                        if bool(result.get("cache_hit")):
+                            self.task_cache_hits += 1
+                        else:
+                            self.task_cache_misses += 1
                         self._store_setting_outcome(
                             setting_results=setting_results,
                             setting_igd_curves=setting_igd_curves,
                             setting_hv_curves=setting_hv_curves,
                             setting_diagnostics=setting_diagnostics,
                             result=result,
-                            collect_curves=collect_curves,
-                            collect_diagnostics=collect_diagnostics,
+                            collect_curves=collect_curves and str(result["setting_key"]) == canonical_key,
+                            collect_diagnostics=collect_diagnostics and str(result["setting_key"]) == canonical_key,
                         )
                         elapsed = time.time() - t_start
                         rate = counter / (elapsed + 1e-6)
                         eta = (total - counter) / (rate + 1e-6)
+                        cache_label = "hit" if bool(result.get("cache_hit")) else "run"
                         print(
                             f"\r  [{progress_prefix} {counter:4d}/{total}] ({int(result['nt']):>2d},{int(result['tau_t']):>2d}) "
-                            f"{str(result['algo_name']):>16s}|{str(result['prob_name']):>5s}|R{int(result['run'])+1} | "
+                            f"{str(result['algo_name']):>16s}|{str(result['prob_name']):>5s}|R{int(result['run'])+1} | {cache_label:>3s} | "
                             f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
                             end="",
                             flush=True,
@@ -521,28 +773,41 @@ class ExperimentRunner:
                 counter = 0
                 t_start = time.time()
                 for task in tasks:
-                    result = _run_benchmark_case(task)
+                    resource = problem_resources[(str(task["setting_key"]), str(task["prob_name"]))]
+                    result = self._run_cached_serial_task(task, resource)
                     counter += 1
+                    if bool(result.get("cache_hit")):
+                        self.task_cache_hits += 1
+                    else:
+                        self.task_cache_misses += 1
                     self._store_setting_outcome(
                         setting_results=setting_results,
                         setting_igd_curves=setting_igd_curves,
                         setting_hv_curves=setting_hv_curves,
                         setting_diagnostics=setting_diagnostics,
                         result=result,
-                        collect_curves=collect_curves,
-                        collect_diagnostics=collect_diagnostics,
+                        collect_curves=collect_curves and str(result["setting_key"]) == canonical_key,
+                        collect_diagnostics=collect_diagnostics and str(result["setting_key"]) == canonical_key,
                     )
                     elapsed = time.time() - t_start
                     rate = counter / (elapsed + 1e-6)
                     eta = (total - counter) / (rate + 1e-6)
+                    cache_label = "hit" if bool(result.get("cache_hit")) else "run"
                     print(
                         f"\r  [{progress_prefix} {counter:4d}/{total}] ({int(result['nt']):>2d},{int(result['tau_t']):>2d}) "
-                        f"{str(result['algo_name']):>16s}|{str(result['prob_name']):>5s}|R{int(result['run'])+1} | "
+                        f"{str(result['algo_name']):>16s}|{str(result['prob_name']):>5s}|R{int(result['run'])+1} | {cache_label:>3s} | "
                         f"{elapsed:.0f}s elapsed, ~{eta:.0f}s left",
                         end="",
                         flush=True,
                     )
-        print(f"\n  完成, 总耗时 {time.time() - t_start:.1f}s")
+        print(
+            f"\n  完成, 总耗时 {time.time() - t_start:.1f}s"
+            + (
+                f" | cache hits={self.task_cache_hits}, misses={self.task_cache_misses}"
+                if self._cache_enabled()
+                else ""
+            )
+        )
         return setting_results, setting_igd_curves, setting_hv_curves, setting_diagnostics
 
     def run_all(self):
@@ -594,7 +859,7 @@ class ExperimentRunner:
         self.ablation_results = self.ablation_setting_results.get(self._canonical_setting_key(), {})
         return self.ablation_results
 
-    def _run_single(self, algo_spec, obj_func, pof_func, problem_suite=None):
+    def _run_single(self, algo_spec, obj_func, pof_func, problem_suite=None, precomputed_aux: dict[str, object] | None = None):
         """运行一次单算法-单问题实验。
 
         这一步内部还包含多个环境变化阶段。
@@ -622,9 +887,15 @@ class ExperimentRunner:
         ms_list: List[float] = []
         generation = 0
         problem_suite = problem_suite or self.problems
+        precomputed_aux = dict(precomputed_aux or {})
+        precomputed_times = [float(value) for value in precomputed_aux.get("times", [])]
+        precomputed_true_pofs = [np.asarray(points, dtype=float) for points in precomputed_aux.get("true_pof_series", [])]
 
         for change_index in range(self.cfg.N_CHANGES):
-            t = problem_suite.get_time(generation)
+            if change_index < len(precomputed_times):
+                t = precomputed_times[change_index]
+            else:
+                t = problem_suite.get_time(generation)
 
             if change_index == 0:
                 algo.fitness = algo.evaluate(algo.population, obj_func, t)
@@ -637,10 +908,13 @@ class ExperimentRunner:
             generation += self.cfg.GENS_PER_CHANGE
             obtained = algo.get_pareto_front()
 
-            try:
-                true_pof = pof_func(t=t)
-            except TypeError:
-                true_pof = pof_func()
+            if change_index < len(precomputed_true_pofs):
+                true_pof = precomputed_true_pofs[change_index]
+            else:
+                try:
+                    true_pof = pof_func(t=t)
+                except TypeError:
+                    true_pof = pof_func()
             ref_point = np.max(np.vstack([true_pof, obtained]), axis=0) + 0.1
 
             igd_list.append(self.metrics.igd(obtained, true_pof))
@@ -950,6 +1224,7 @@ def run_benchmark(
     run_ablation: bool = True,
     algorithms: list[str] | None = None,
     problems: list[str] | None = None,
+    force_rerun: bool = False,
 ):
     """benchmark 主线常用入口。"""
 
@@ -960,6 +1235,9 @@ def run_benchmark(
 
     cfg = ExperimentConfig()
     cfg.MAX_WORKERS = max(1, int(workers or 1))
+    cfg.CACHE_ENABLED = True
+    cfg.FORCE_RERUN = bool(force_rerun)
+    cfg.CACHE_DIR = str(_BENCHMARK_TASK_CACHE_DIR)
     if quick:
         cfg.N_RUNS = 2
         cfg.N_CHANGES = 5
@@ -987,6 +1265,10 @@ def run_benchmark(
     print(f"  运行次数={cfg.N_RUNS} (建议 ≥20 用于 Wilcoxon 检验)")
     print(f"  并行进程={cfg.MAX_WORKERS}")
     print(f"  导出图表={'是' if render_figures else '否'}  消融实验={'是' if run_ablation else '否'}")
+    print(
+        f"  任务缓存={'开启' if cfg.CACHE_ENABLED else '关闭'}"
+        + (f"  强制重跑={'是' if cfg.FORCE_RERUN else '否'}" if cfg.CACHE_ENABLED else "")
+    )
     print(f"  算法: {list(cfg.ALGORITHMS.keys())}\n")
 
     report_root = build_report_paths(Path(output_dir) if output_dir else None, prefix="benchmark")
@@ -1034,6 +1316,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=None, help="Process workers for outer-run parallelism; default is auto for full mode and 1 for quick mode.")
     parser.add_argument("--skip-ablation", action="store_true", help="Skip ablation/control variants to reduce runtime.")
     parser.add_argument("--summary-only", action="store_true", help="Skip figure rendering and export only raw tables plus Markdown summary.")
+    parser.add_argument("--force-rerun", action="store_true", help="Ignore benchmark task cache and recompute all tasks for this run.")
     parser.add_argument("--algorithms", nargs="*", default=None, help="Optional benchmark algorithms to run, e.g. KEMM RI Tr.")
     parser.add_argument("--problems", nargs="*", default=None, help="Optional benchmark problems to run, e.g. FDA1 FDA3 dMOP2.")
     parser.add_argument("--output-dir", default=None, help="Optional output directory.")
@@ -1074,6 +1357,7 @@ def main():
             run_ablation=run_ablation,
             algorithms=args.algorithms,
             problems=args.problems,
+            force_rerun=args.force_rerun,
         )
     elif args.with_jy:
         run_benchmark(
@@ -1086,6 +1370,7 @@ def main():
             run_ablation=run_ablation,
             algorithms=args.algorithms,
             problems=args.problems,
+            force_rerun=args.force_rerun,
         )
     elif args.quick:
         run_benchmark(
@@ -1097,6 +1382,7 @@ def main():
             run_ablation=run_ablation,
             algorithms=args.algorithms,
             problems=args.problems,
+            force_rerun=args.force_rerun,
         )
     else:
         run_benchmark(
@@ -1108,9 +1394,10 @@ def main():
             run_ablation=run_ablation,
             algorithms=args.algorithms,
             problems=args.problems,
+            force_rerun=args.force_rerun,
         )
         print(
-            "\n  使用选项: --quick | --full | --with-jy | --workers <n> | --skip-ablation | "
+            "\n  使用选项: --quick | --full | --with-jy | --workers <n> | --skip-ablation | --force-rerun | "
             "--summary-only | --algorithms <names...> | --problems <names...> | "
             "--output-dir <path> | --plot-preset <preset>"
         )

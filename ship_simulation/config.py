@@ -203,6 +203,193 @@ class KEMMConfig:
     runtime: RuntimeKEMMConfig = field(default_factory=lambda: RuntimeKEMMConfig(benchmark_aware_prior=False))
 
 
+@dataclass(frozen=True)
+class ScenarioSolveProfile:
+    random_search_samples: int
+    evolutionary_baseline_pop_size: int
+    evolutionary_baseline_generations: int
+    kemm_pop_size: int
+    kemm_generations: int
+    kemm_initial_guess_copies: int
+    kemm_heuristic_detour_limit: int
+    kemm_reuse_solver_state: bool
+    local_horizon: float
+    execution_horizon: float
+    max_replans: int
+    objective_weights: Tuple[float, float, float]
+    safety_clearance: float
+    soft_clearance_penalty_per_meter: float
+    hard_clearance_penalty_per_meter: float
+    time_safety_penalty_weight: float
+    risk_safety_penalty_weight: float
+    domain_risk_weight: float
+
+
+def _uniform_solve_profile(
+    demo: "DemoConfig | None" = None,
+    problem: ProblemConfig | None = None,
+) -> ScenarioSolveProfile:
+    demo_cfg = demo or DemoConfig.__new__(DemoConfig)
+    if demo is None:
+        demo_cfg.random_search_samples = 48
+        demo_cfg.evolutionary_baseline_pop_size = 36
+        demo_cfg.evolutionary_baseline_generations = 16
+        demo_cfg.kemm = KEMMConfig()
+        demo_cfg.episode = EpisodeConfig()
+    problem_cfg = problem or ProblemConfig()
+    return ScenarioSolveProfile(
+        random_search_samples=int(demo_cfg.random_search_samples),
+        evolutionary_baseline_pop_size=int(demo_cfg.evolutionary_baseline_pop_size),
+        evolutionary_baseline_generations=int(demo_cfg.evolutionary_baseline_generations),
+        kemm_pop_size=int(demo_cfg.kemm.pop_size),
+        kemm_generations=int(demo_cfg.kemm.generations),
+        kemm_initial_guess_copies=int(demo_cfg.kemm.initial_guess_copies),
+        kemm_heuristic_detour_limit=int(demo_cfg.kemm.heuristic_detour_limit),
+        kemm_reuse_solver_state=bool(demo_cfg.kemm.reuse_solver_state_across_replans),
+        local_horizon=float(demo_cfg.episode.local_horizon),
+        execution_horizon=float(demo_cfg.episode.execution_horizon),
+        max_replans=int(demo_cfg.episode.max_replans),
+        objective_weights=tuple(float(value) for value in problem_cfg.objective_weights),
+        safety_clearance=float(problem_cfg.safety_clearance),
+        soft_clearance_penalty_per_meter=float(problem_cfg.soft_clearance_penalty_per_meter),
+        hard_clearance_penalty_per_meter=float(problem_cfg.hard_clearance_penalty_per_meter),
+        time_safety_penalty_weight=float(problem_cfg.time_safety_penalty_weight),
+        risk_safety_penalty_weight=float(problem_cfg.risk_safety_penalty_weight),
+        domain_risk_weight=float(problem_cfg.domain_risk_weight),
+    )
+
+
+def _build_full_tuned_profiles() -> dict[str, ScenarioSolveProfile]:
+    base_problem = ProblemConfig()
+    base_demo = DemoConfig.__new__(DemoConfig)
+    base_demo.random_search_samples = 48
+    base_demo.evolutionary_baseline_pop_size = 36
+    base_demo.evolutionary_baseline_generations = 16
+    base_demo.kemm = KEMMConfig()
+    base_demo.episode = EpisodeConfig()
+    legacy = _uniform_solve_profile(base_demo, base_problem)
+    return {
+        "head_on": ScenarioSolveProfile(
+            random_search_samples=32,
+            evolutionary_baseline_pop_size=28,
+            evolutionary_baseline_generations=10,
+            kemm_pop_size=24,
+            kemm_generations=10,
+            kemm_initial_guess_copies=3,
+            kemm_heuristic_detour_limit=2,
+            kemm_reuse_solver_state=True,
+            local_horizon=300.0,
+            execution_horizon=240.0,
+            max_replans=6,
+            objective_weights=(1.0, 1.0, 1.10),
+            safety_clearance=legacy.safety_clearance,
+            soft_clearance_penalty_per_meter=legacy.soft_clearance_penalty_per_meter,
+            hard_clearance_penalty_per_meter=legacy.hard_clearance_penalty_per_meter,
+            time_safety_penalty_weight=legacy.time_safety_penalty_weight,
+            risk_safety_penalty_weight=legacy.risk_safety_penalty_weight,
+            domain_risk_weight=legacy.domain_risk_weight,
+        ),
+        "crossing": ScenarioSolveProfile(
+            random_search_samples=40,
+            evolutionary_baseline_pop_size=32,
+            evolutionary_baseline_generations=12,
+            kemm_pop_size=30,
+            kemm_generations=12,
+            kemm_initial_guess_copies=4,
+            kemm_heuristic_detour_limit=4,
+            kemm_reuse_solver_state=False,
+            local_horizon=420.0,
+            execution_horizon=210.0,
+            max_replans=6,
+            objective_weights=(1.0, 0.95, 1.35),
+            safety_clearance=210.0,
+            soft_clearance_penalty_per_meter=2.6,
+            hard_clearance_penalty_per_meter=18.0,
+            time_safety_penalty_weight=legacy.time_safety_penalty_weight,
+            risk_safety_penalty_weight=0.035,
+            domain_risk_weight=0.60,
+        ),
+        "overtaking": ScenarioSolveProfile(
+            random_search_samples=32,
+            evolutionary_baseline_pop_size=28,
+            evolutionary_baseline_generations=10,
+            kemm_pop_size=26,
+            kemm_generations=10,
+            kemm_initial_guess_copies=3,
+            kemm_heuristic_detour_limit=3,
+            kemm_reuse_solver_state=True,
+            local_horizon=320.0,
+            execution_horizon=240.0,
+            max_replans=6,
+            objective_weights=(1.0, 0.95, 1.25),
+            safety_clearance=200.0,
+            soft_clearance_penalty_per_meter=2.4,
+            hard_clearance_penalty_per_meter=18.0,
+            time_safety_penalty_weight=0.30,
+            risk_safety_penalty_weight=0.032,
+            domain_risk_weight=0.60,
+        ),
+        "harbor_clutter": ScenarioSolveProfile(
+            random_search_samples=40,
+            evolutionary_baseline_pop_size=30,
+            evolutionary_baseline_generations=12,
+            kemm_pop_size=28,
+            kemm_generations=12,
+            kemm_initial_guess_copies=4,
+            kemm_heuristic_detour_limit=4,
+            kemm_reuse_solver_state=False,
+            local_horizon=420.0,
+            execution_horizon=240.0,
+            max_replans=6,
+            objective_weights=(1.0, 1.0, 1.45),
+            safety_clearance=220.0,
+            soft_clearance_penalty_per_meter=2.8,
+            hard_clearance_penalty_per_meter=18.0,
+            time_safety_penalty_weight=legacy.time_safety_penalty_weight,
+            risk_safety_penalty_weight=0.040,
+            domain_risk_weight=0.62,
+        ),
+    }
+
+
+@dataclass
+class ScenarioSolveProfiles:
+    active_profile_name: str = "legacy_uniform"
+    legacy_uniform: dict[str, ScenarioSolveProfile] = field(default_factory=dict)
+    full_tuned: dict[str, ScenarioSolveProfile] = field(default_factory=_build_full_tuned_profiles)
+
+    def __post_init__(self) -> None:
+        if not self.legacy_uniform:
+            uniform = _uniform_solve_profile()
+            self.legacy_uniform = {
+                "head_on": uniform,
+                "crossing": uniform,
+                "overtaking": uniform,
+                "harbor_clutter": uniform,
+            }
+
+    def resolve(
+        self,
+        scenario_key: str,
+        *,
+        demo: "DemoConfig | None" = None,
+        problem: ProblemConfig | None = None,
+    ) -> ScenarioSolveProfile:
+        key = str(scenario_key)
+        if self.active_profile_name == "legacy_uniform" and demo is not None and problem is not None:
+            return _uniform_solve_profile(demo, problem)
+        groups = {
+            "legacy_uniform": self.legacy_uniform,
+            "full_tuned": self.full_tuned,
+        }
+        selected = groups.get(self.active_profile_name)
+        if selected is None:
+            raise ValueError(f"Unsupported scenario solve profile set: {self.active_profile_name}")
+        if key not in selected:
+            raise KeyError(f"Unknown scenario key for solve profile: {key}")
+        return selected[key]
+
+
 @dataclass
 class DemoConfig:
     """ship 演示与批量报告配置。"""
@@ -218,6 +405,9 @@ class DemoConfig:
     appendix_plots: bool = False
     kemm: KEMMConfig = field(default_factory=KEMMConfig)
     episode: EpisodeConfig = field(default_factory=EpisodeConfig)
+    scenario_profiles: ScenarioSolveProfiles = field(default_factory=ScenarioSolveProfiles)
+    episode_cache_enabled: bool = True
+    render_workers: int = 2
 
 
 def build_default_config() -> ProblemConfig:
@@ -229,7 +419,9 @@ def build_default_config() -> ProblemConfig:
 def build_default_demo_config() -> DemoConfig:
     """返回默认 demo/report 配置。"""
 
-    return DemoConfig()
+    demo = DemoConfig()
+    demo.scenario_profiles.active_profile_name = "full_tuned"
+    return demo
 
 
 def build_experiment_profile(profile_name: str) -> ScenarioExperimentConfig:

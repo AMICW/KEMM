@@ -119,14 +119,17 @@
 - 定义运行器 `ExperimentRunner`
 - 定义结果展示器 `ResultPresenter`
 - 定义命令行入口 `run_benchmark()` 和 `main()`
+- 承担 benchmark 任务级缓存、canonical setting 聚合和报告导出编排
 
 调用链：
 
-1. `main()` 解析 `--quick / --full / --with-jy / --output-dir`
+1. `main()` 解析 `--quick / --full / --with-jy / --workers / --skip-ablation / --summary-only / --force-rerun / --algorithms / --problems / --output-dir`
 2. `run_benchmark()` 创建输出目录
 3. `ExperimentRunner.run_all()` 逐算法、逐问题、逐重复运行实验
-4. `ResultPresenter` 打印表格并导出图表
-5. `export_benchmark_report()` 导出 CSV/JSON/Markdown 报告
+4. 完整模式默认复用 `benchmark_outputs/_cache/benchmark_tasks/` 下的任务缓存
+5. canonical setting 保留完整 `curve + change_diagnostics` 聚合，非 canonical setting 主要保留最终标量指标
+6. `ResultPresenter` 打印表格并导出图表
+7. `export_benchmark_report()` 导出 CSV/JSON/Markdown 报告
 
 #### `apps/ship_runner.py`
 
@@ -561,10 +564,12 @@
 作用：
 
 - 批量运行 ship 场景并生成报告
+- 负责 episode cache、图表分阶段渲染和 summary/metadata/inventory 导出
 
 当前比较：
 
 - `KEMM`
+- `NSGA-style`
 - `Random`
 
 输出目录：
@@ -612,24 +617,26 @@
 
 一次 benchmark 快速实验的执行流程如下：
 
-1. 入口 `python run_experiments.py --quick`
-2. wrapper 转发到 `apps.benchmark_runner.main()`
+1. 推荐入口 `python -m apps.benchmark_runner --quick`
+2. `main()` 解析 CLI，并根据模式设置 worker、ablation、figure export 和 cache 行为
 3. `ExperimentConfig` 给出问题集、算法集、重复次数
 4. `ExperimentRunner.run_all()` 三重循环：
    - 算法
    - 问题
    - 重复运行
-5. 每次运行调用 `_run_single()`
-6. 在每个环境变化点：
+5. 对每个 `(setting, algorithm, problem, run, ablation_variant)` 任务，先检查 benchmark task cache
+6. 若 cache miss，再调用 `_run_single()` 或对应串/并行任务逻辑
+7. 在每个环境变化点：
    - 计算当前时间变量 `t`
    - 首次直接评价
    - 后续调用 `algo.respond_to_change()`
    - 再执行若干代 `evolve_one_gen()`
-7. 每个变化阶段结束后：
+8. 每个变化阶段结束后：
    - 取获得的 Pareto front
    - 生成真实 POF
    - 计算 `IGD / SP / MS`
-8. 整体结束后：
+9. 整体结束后：
+   - canonical setting 保留完整 `IGD/HV` 曲线和 `KEMMChangeDiagnostics`
    - `ResultPresenter` 打印结果
    - 画图
    - `export_benchmark_report()` 导出报告
@@ -657,12 +664,22 @@
 批量报告流程：
 
 1. 入口 `python ship_simulation/run_report.py`
-2. 依次运行 `head_on / crossing / overtaking`
-3. 每个场景分别跑：
-   - `KEMM`
-   - `Random`
-4. 生成每场景图表
-5. 汇总到统一报告目录
+2. 构造 `head_on / crossing / overtaking / harbor_clutter` 的场景映射
+3. 对每个场景先解析 `ScenarioSolveProfile`
+4. 依次运行 `(scenario, algorithm, run)` episode 任务，并优先检查 `raw/episode_cache/`
+   - 若启用 `--strict-comparable`，会自动追加 `*_matched` 基线并按 KEMM 预算对齐
+5. 先完成全部 episode 计算，再进入图表渲染阶段
+6. 再生成每场景图和全局图
+7. 最后写 `summary / metadata / inventory`，并额外导出统计检验文件
+   - `raw/statistical_tests.json`
+   - `raw/statistical_tests.csv`
+   - `reports/statistical_significance.md`
+8. 若启用 `--robustness-sweep`，再追加扰动扫描输出
+   - `raw/robustness_runs.csv`
+   - `raw/robustness_curve.csv`
+   - `raw/robustness_summary.json`
+   - `reports/robustness_sweep.md`
+   - `figures/robustness_success_curve.png`（启用渲染时）
 
 ---
 

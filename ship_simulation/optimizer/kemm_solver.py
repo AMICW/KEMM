@@ -232,14 +232,43 @@ class ShipKEMMOptimizer:
         decisions: np.ndarray,
         objectives: np.ndarray,
     ) -> tuple[np.ndarray, EvaluationResult]:
-        evaluations = self.interface.simulate_population(decisions, copy_results=False)
-        real_index = select_representative_index(
-            objectives,
-            evaluations,
-            self.interface.config.objective_weights,
-            safety_clearance=self.interface.config.safety_clearance,
+        candidate_decisions = np.asarray(decisions, dtype=float)
+        candidate_objectives = np.asarray(objectives, dtype=float)
+        supplemental = self._initial_guess_samples(
+            max(
+                1,
+                min(
+                    12,
+                    self.demo_config.kemm.initial_guess_copies
+                    + (self.demo_config.kemm.heuristic_detour_limit if self.demo_config.kemm.inject_heuristic_detours else 0)
+                    + 1,
+                ),
+            )
         )
-        return decisions[real_index].copy(), self.interface.simulate(decisions[real_index])
+        if supplemental is not None and len(supplemental) > 0:
+            supplemental = np.asarray(supplemental, dtype=float)
+            candidate_decisions = np.vstack([candidate_decisions, supplemental])
+            supplemental_objectives = self.context.evaluate_population(supplemental)[:, :3]
+            candidate_objectives = np.vstack([candidate_objectives, supplemental_objectives])
+        evaluations = self.interface.simulate_population(candidate_decisions, copy_results=False)
+        successful_indices = [index for index, evaluation in enumerate(evaluations) if bool(evaluation.reached_goal)]
+        if successful_indices:
+            real_index = successful_indices[
+                select_representative_index(
+                    candidate_objectives[successful_indices],
+                    [evaluations[index] for index in successful_indices],
+                    self.interface.config.objective_weights,
+                    safety_clearance=self.interface.config.safety_clearance,
+                )
+            ]
+        else:
+            real_index = select_representative_index(
+                candidate_objectives,
+                evaluations,
+                self.interface.config.objective_weights,
+                safety_clearance=self.interface.config.safety_clearance,
+            )
+        return candidate_decisions[real_index].copy(), self.interface.simulate(candidate_decisions[real_index])
 
     def _pick_by_weighted_score(self, objectives: np.ndarray) -> int:
         if len(objectives) == 1:

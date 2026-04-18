@@ -85,87 +85,93 @@ class NomotoShip:
 
         dt = self.sim_config.dt
         horizon = horizon if horizon is not None else self.sim_config.horizon
-        state = ShipState(
-            x=initial_state.x,
-            y=initial_state.y,
-            heading=initial_state.heading,
-            speed=initial_state.speed,
-            yaw_rate=initial_state.yaw_rate,
-        )
+        state_x = float(initial_state.x)
+        state_y = float(initial_state.y)
+        state_heading = float(initial_state.heading)
+        state_speed = float(initial_state.speed)
+        state_yaw_rate = float(initial_state.yaw_rate)
 
-        times: List[float] = [start_time]
-        positions: List[np.ndarray] = [state.position()]
-        headings: List[float] = [state.heading]
-        speeds: List[float] = [state.speed]
-        yaw_rates: List[float] = [state.yaw_rate]
-        commanded_yaw_rates: List[float] = [state.yaw_rate]
-        drift_vectors: List[np.ndarray] = [self.environment.drift_velocity(state.position(), start_time)]
-        waypoint_indices: List[int] = [0]
-
-        waypoint_index = 0
+        waypoint_targets = [np.asarray(point, dtype=float) for point in waypoints]
+        clipped_speeds = [float(np.clip(speed, self.config.min_speed, self.config.max_speed)) for speed in segment_speeds]
         arrival_radius = max(self.sim_config.arrival_tolerance, self.config.length * 0.4)
         steps = int(horizon / dt)
+        max_samples = steps + 1
+        times = np.empty(max_samples, dtype=float)
+        positions = np.empty((max_samples, 2), dtype=float)
+        headings = np.empty(max_samples, dtype=float)
+        speeds = np.empty(max_samples, dtype=float)
+        yaw_rates = np.empty(max_samples, dtype=float)
+        commanded_yaw_rates = np.empty(max_samples, dtype=float)
+        drift_vectors = np.empty((max_samples, 2), dtype=float)
+        waypoint_indices = np.empty(max_samples, dtype=int)
+
+        times[0] = float(start_time)
+        positions[0] = np.array([state_x, state_y], dtype=float)
+        headings[0] = state_heading
+        speeds[0] = state_speed
+        yaw_rates[0] = state_yaw_rate
+        commanded_yaw_rates[0] = state_yaw_rate
+        drift_vectors[0] = self.environment.drift_velocity(positions[0], start_time)
+        waypoint_indices[0] = 0
+
+        waypoint_index = 0
+        count = 1
         reached_goal = False
         terminal_distance = float("inf")
 
         for step in range(1, steps + 1):
             time_s = start_time + step * dt
-            target = np.asarray(waypoints[waypoint_index], dtype=float)
-            target_speed = float(np.clip(segment_speeds[waypoint_index], self.config.min_speed, self.config.max_speed))
+            target = waypoint_targets[waypoint_index]
+            target_speed = clipped_speeds[waypoint_index]
 
-            rel = target - state.position()
-            distance = float(np.linalg.norm(rel))
+            rel_x = float(target[0] - state_x)
+            rel_y = float(target[1] - state_y)
+            distance = float(np.hypot(rel_x, rel_y))
             if distance < arrival_radius and waypoint_index < len(waypoints) - 1:
                 waypoint_index += 1
-                target = np.asarray(waypoints[waypoint_index], dtype=float)
-                target_speed = float(np.clip(segment_speeds[waypoint_index], self.config.min_speed, self.config.max_speed))
-                rel = target - state.position()
-                distance = float(np.linalg.norm(rel))
+                target = waypoint_targets[waypoint_index]
+                target_speed = clipped_speeds[waypoint_index]
+                rel_x = float(target[0] - state_x)
+                rel_y = float(target[1] - state_y)
+                distance = float(np.hypot(rel_x, rel_y))
 
-            desired_heading = atan2(rel[1], rel[0])
-            heading_error = wrap_to_pi(desired_heading - state.heading)
+            desired_heading = atan2(rel_y, rel_x)
+            heading_error = wrap_to_pi(desired_heading - state_heading)
             commanded_yaw_rate = np.clip(
                 self.config.heading_gain * heading_error,
                 -np.deg2rad(self.config.max_commanded_yaw_rate_deg),
                 np.deg2rad(self.config.max_commanded_yaw_rate_deg),
             )
             yaw_rate_dot = (
-                self.config.nomoto_k * commanded_yaw_rate - state.yaw_rate
+                self.config.nomoto_k * commanded_yaw_rate - state_yaw_rate
             ) / max(self.config.nomoto_t, 1e-6)
-            speed_dot = (target_speed - state.speed) / max(self.config.speed_time_constant, 1e-6)
-
-            state = ShipState(
-                x=state.x,
-                y=state.y,
-                heading=wrap_to_pi(state.heading + (state.yaw_rate + yaw_rate_dot * dt) * dt),
-                speed=float(np.clip(state.speed + speed_dot * dt, self.config.min_speed, self.config.max_speed)),
-                yaw_rate=float(np.clip(
-                    state.yaw_rate + yaw_rate_dot * dt,
+            speed_dot = (target_speed - state_speed) / max(self.config.speed_time_constant, 1e-6)
+            state_heading = wrap_to_pi(state_heading + (state_yaw_rate + yaw_rate_dot * dt) * dt)
+            state_speed = float(np.clip(state_speed + speed_dot * dt, self.config.min_speed, self.config.max_speed))
+            state_yaw_rate = float(
+                np.clip(
+                    state_yaw_rate + yaw_rate_dot * dt,
                     -np.deg2rad(self.config.max_turn_rate_deg),
                     np.deg2rad(self.config.max_turn_rate_deg),
-                )),
+                )
             )
 
-            body_velocity = np.array([state.speed * cos(state.heading), state.speed * sin(state.heading)], dtype=float)
-            drift = self.environment.drift_velocity(state.position(), time_s)
+            body_velocity = np.array([state_speed * cos(state_heading), state_speed * sin(state_heading)], dtype=float)
+            drift = self.environment.drift_velocity(np.array([state_x, state_y], dtype=float), time_s)
             ground_velocity = body_velocity + drift
-            state = ShipState(
-                x=float(state.x + ground_velocity[0] * dt),
-                y=float(state.y + ground_velocity[1] * dt),
-                heading=state.heading,
-                speed=state.speed,
-                yaw_rate=state.yaw_rate,
-            )
+            state_x = float(state_x + ground_velocity[0] * dt)
+            state_y = float(state_y + ground_velocity[1] * dt)
 
-            current_distance = float(np.linalg.norm(np.asarray(waypoints[-1], dtype=float) - state.position()))
-            times.append(time_s)
-            positions.append(state.position())
-            headings.append(state.heading)
-            speeds.append(state.speed)
-            yaw_rates.append(state.yaw_rate)
-            commanded_yaw_rates.append(float(commanded_yaw_rate))
-            drift_vectors.append(drift)
-            waypoint_indices.append(int(waypoint_index))
+            current_distance = float(np.linalg.norm(waypoint_targets[-1] - np.array([state_x, state_y], dtype=float)))
+            times[count] = time_s
+            positions[count] = np.array([state_x, state_y], dtype=float)
+            headings[count] = state_heading
+            speeds[count] = state_speed
+            yaw_rates[count] = state_yaw_rate
+            commanded_yaw_rates[count] = float(commanded_yaw_rate)
+            drift_vectors[count] = drift
+            waypoint_indices[count] = int(waypoint_index)
+            count += 1
 
             if waypoint_index == len(waypoints) - 1 and current_distance < arrival_radius:
                 reached_goal = True
@@ -176,17 +182,17 @@ class NomotoShip:
                 terminal_distance = current_distance
 
         if not np.isfinite(terminal_distance):
-            terminal_distance = float(np.linalg.norm(np.asarray(waypoints[-1], dtype=float) - state.position()))
+            terminal_distance = float(np.linalg.norm(waypoint_targets[-1] - np.array([state_x, state_y], dtype=float)))
 
         return Trajectory(
-            times=np.asarray(times, dtype=float),
-            positions=np.asarray(positions, dtype=float),
-            headings=np.asarray(headings, dtype=float),
-            speeds=np.asarray(speeds, dtype=float),
-            yaw_rates=np.asarray(yaw_rates, dtype=float),
-            commanded_yaw_rates=np.asarray(commanded_yaw_rates, dtype=float),
-            drift_vectors=np.asarray(drift_vectors, dtype=float),
-            waypoint_indices=np.asarray(waypoint_indices, dtype=int),
+            times=times[:count].copy(),
+            positions=positions[:count].copy(),
+            headings=headings[:count].copy(),
+            speeds=speeds[:count].copy(),
+            yaw_rates=yaw_rates[:count].copy(),
+            commanded_yaw_rates=commanded_yaw_rates[:count].copy(),
+            drift_vectors=drift_vectors[:count].copy(),
+            waypoint_indices=waypoint_indices[:count].copy(),
             reached_goal=reached_goal,
             terminal_distance=float(terminal_distance),
         )
@@ -219,10 +225,14 @@ class NomotoShip:
             [initial_state.speed * cos(initial_state.heading), initial_state.speed * sin(initial_state.heading)],
             dtype=float,
         )
+        pos_x = float(positions[0, 0])
+        pos_y = float(positions[0, 1])
         for idx in range(1, steps + 1):
-            drift = self.environment.drift_velocity(positions[idx - 1], times[idx])
+            drift = self.environment.drift_velocity(np.array([pos_x, pos_y], dtype=float), times[idx])
             drifts[idx] = drift
-            positions[idx] = positions[idx - 1] + (velocity_body + drift) * dt
+            pos_x = float(pos_x + (velocity_body[0] + drift[0]) * dt)
+            pos_y = float(pos_y + (velocity_body[1] + drift[1]) * dt)
+            positions[idx] = np.array([pos_x, pos_y], dtype=float)
 
         return Trajectory(
             times=times,

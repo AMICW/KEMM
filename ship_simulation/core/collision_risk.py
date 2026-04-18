@@ -14,6 +14,23 @@ from ship_simulation.core.ship_model import Trajectory
 from ship_simulation.scenario.encounter import CircularObstacle, PolygonObstacle
 
 
+@dataclass(frozen=True)
+class CircularObstacleDescriptor:
+    center: np.ndarray
+    radius: float
+
+
+@dataclass(frozen=True)
+class PolygonObstacleDescriptor:
+    vertices: np.ndarray
+    edge_starts: np.ndarray
+    edge_ends: np.ndarray
+    bounding_box: np.ndarray
+
+
+StaticObstacleDescriptor = CircularObstacleDescriptor | PolygonObstacleDescriptor
+
+
 @dataclass
 class RiskBreakdown:
     """碰撞风险分解结果。"""
@@ -55,12 +72,33 @@ class ShipDomainRiskModel:
             dtype=float,
         )
 
+    def _domain_axes_series(self, rel_body: np.ndarray) -> np.ndarray:
+        rel = np.asarray(rel_body, dtype=float)
+        longitudinal = np.where(rel[:, 0] >= 0.0, self.domain_config.forward_factor, self.domain_config.aft_factor)
+        lateral = np.where(rel[:, 1] <= 0.0, self.domain_config.starboard_factor, self.domain_config.port_factor)
+        return np.column_stack(
+            [
+                longitudinal * self.ship_config.length,
+                lateral * self.ship_config.beam,
+            ]
+        ).astype(float)
+
     @staticmethod
     def _rotate_to_body(relative_xy: np.ndarray, heading: float) -> np.ndarray:
         c = cos(heading)
         s = sin(heading)
         rotation = np.array([[c, s], [-s, c]], dtype=float)
         return rotation @ relative_xy
+
+    @staticmethod
+    def _rotate_to_body_series(relative_xy: np.ndarray, headings: np.ndarray) -> np.ndarray:
+        rel = np.asarray(relative_xy, dtype=float)
+        heading_arr = np.asarray(headings, dtype=float)
+        c = np.cos(heading_arr)
+        s = np.sin(heading_arr)
+        x_body = c * rel[:, 0] + s * rel[:, 1]
+        y_body = -s * rel[:, 0] + c * rel[:, 1]
+        return np.column_stack([x_body, y_body]).astype(float)
 
     def instantaneous_domain_risk(self, own_position: np.ndarray, own_heading: float, target_position: np.ndarray) -> float:
         rel_world = np.asarray(target_position, dtype=float) - np.asarray(own_position, dtype=float)
@@ -70,6 +108,23 @@ class ShipDomainRiskModel:
         if normalized_distance <= 1.0:
             return 1.0 + (1.0 - normalized_distance)
         return float(np.exp(-2.2 * (normalized_distance - 1.0)))
+
+    def instantaneous_domain_risk_series(
+        self,
+        own_positions: np.ndarray,
+        own_headings: np.ndarray,
+        target_positions: np.ndarray,
+    ) -> np.ndarray:
+        rel_world = np.asarray(target_positions, dtype=float) - np.asarray(own_positions, dtype=float)
+        rel_body = self._rotate_to_body_series(rel_world, np.asarray(own_headings, dtype=float))
+        axes = self._domain_axes_series(rel_body)
+        normalized_distance = np.sqrt(
+            np.sum((rel_body / np.maximum(axes * self.domain_config.soft_margin, 1e-9)) ** 2, axis=1)
+        )
+        inside = normalized_distance <= 1.0
+        values = np.exp(-2.2 * (normalized_distance - 1.0))
+        values[inside] = 1.0 + (1.0 - normalized_distance[inside])
+        return values.astype(float)
 
     @staticmethod
     def _trajectory_velocity(traj: Trajectory, idx: int) -> np.ndarray:
@@ -84,6 +139,18 @@ class ShipDomainRiskModel:
             dt = traj.times[prev_idx] - traj.times[prev_idx - 1]
         return delta / max(float(dt), 1e-6)
 
+    @staticmethod
+    def _trajectory_velocities(traj: Trajectory) -> np.ndarray:
+        if len(traj.positions) < 2:
+            return np.zeros((len(traj.positions), 2), dtype=float)
+        deltas = np.diff(traj.positions, axis=0)
+        dts = np.diff(traj.times)
+        safe_dts = np.maximum(dts, 1e-6)
+        velocities = np.zeros((len(traj.positions), 2), dtype=float)
+        velocities[0] = deltas[0] / safe_dts[0]
+        velocities[1:] = deltas / safe_dts[:, None]
+        return velocities
+
     def _dcpa_tcpa(self, own_traj: Trajectory, target_traj: Trajectory, idx: int) -> tuple[float, float]:
         own_pos = own_traj.positions[idx]
         target_pos = target_traj.positions[idx]
@@ -97,6 +164,24 @@ class ShipDomainRiskModel:
         dcpa_vec = rel_pos + tcpa * rel_vel
         dcpa = float(np.linalg.norm(dcpa_vec))
         return dcpa, tcpa
+
+    def _dcpa_tcpa_series(
+        self,
+        own_positions: np.ndarray,
+        own_velocities: np.ndarray,
+        target_positions: np.ndarray,
+        target_velocities: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        rel_pos = np.asarray(target_positions, dtype=float) - np.asarray(own_positions, dtype=float)
+        rel_vel = np.asarray(target_velocities, dtype=float) - np.asarray(own_velocities, dtype=float)
+        rel_speed_sq = np.sum(rel_vel * rel_vel, axis=1)
+        tcpa = np.zeros(len(rel_pos), dtype=float)
+        moving = rel_speed_sq >= 1e-9
+        tcpa[moving] = np.maximum(-np.sum(rel_pos[moving] * rel_vel[moving], axis=1) / rel_speed_sq[moving], 0.0)
+        dcpa_vec = rel_pos + tcpa[:, None] * rel_vel
+        dcpa = np.linalg.norm(dcpa_vec, axis=1)
+        dcpa[~moving] = np.linalg.norm(rel_pos[~moving], axis=1)
+        return dcpa.astype(float), tcpa.astype(float)
 
     @staticmethod
     def _distance_to_segment(point: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
@@ -120,27 +205,114 @@ class ShipDomainRiskModel:
                 inside = not inside
         return inside
 
+    def _point_in_polygon_series(self, points: np.ndarray, vertices: np.ndarray) -> np.ndarray:
+        pts = np.asarray(points, dtype=float)
+        verts = np.asarray(vertices, dtype=float)
+        if len(pts) == 0 or len(verts) == 0:
+            return np.zeros(len(pts), dtype=bool)
+        x = pts[:, 0][:, None]
+        y = pts[:, 1][:, None]
+        x1 = verts[:, 0][None, :]
+        y1 = verts[:, 1][None, :]
+        rolled = np.roll(verts, -1, axis=0)
+        x2 = rolled[:, 0][None, :]
+        y2 = rolled[:, 1][None, :]
+        denom = np.where(np.abs(y2 - y1) <= 1e-9, 1e-9, y2 - y1)
+        intersects = ((y1 > y) != (y2 > y)) & (x < (x2 - x1) * (y - y1) / denom + x1)
+        return (np.sum(intersects, axis=1) % 2 == 1)
+
     def _obstacle_clearance(
         self,
         own_position: np.ndarray,
-        obstacles: Sequence[CircularObstacle | PolygonObstacle],
+        obstacles: Sequence[CircularObstacle | PolygonObstacle] = (),
+        descriptors: Sequence[StaticObstacleDescriptor] | None = None,
     ) -> float:
-        if not obstacles:
-            return float("inf")
-        clearance = float("inf")
-        for obstacle in obstacles:
-            if isinstance(obstacle, CircularObstacle):
-                distance = float(np.linalg.norm(own_position - np.asarray(obstacle.center, dtype=float)) - obstacle.radius)
+        clearance = self._obstacle_clearance_series(
+            np.asarray(own_position, dtype=float).reshape(1, 2),
+            obstacles=obstacles,
+            descriptors=descriptors,
+        )
+        return float(clearance[0]) if clearance.size else float("inf")
+
+    @staticmethod
+    def _distance_to_segments_series(points: np.ndarray, starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
+        pts = np.asarray(points, dtype=float)
+        seg_starts = np.asarray(starts, dtype=float)
+        seg_ends = np.asarray(ends, dtype=float)
+        if len(pts) == 0 or len(seg_starts) == 0:
+            return np.full(len(pts), np.inf, dtype=float)
+        ab = seg_ends - seg_starts
+        denom = np.sum(ab * ab, axis=1)
+        safe_denom = np.where(denom <= 1e-12, 1.0, denom)
+        ap = pts[:, None, :] - seg_starts[None, :, :]
+        t = np.sum(ap * ab[None, :, :], axis=2) / safe_denom[None, :]
+        t = np.clip(t, 0.0, 1.0)
+        projection = seg_starts[None, :, :] + t[:, :, None] * ab[None, :, :]
+        distances = np.linalg.norm(pts[:, None, :] - projection, axis=2)
+        zero_segments = denom <= 1e-12
+        if np.any(zero_segments):
+            distances[:, zero_segments] = np.linalg.norm(
+                pts[:, None, :] - seg_starts[None, zero_segments, :],
+                axis=2,
+            )
+        return np.min(distances, axis=1)
+
+    def _obstacle_clearance_series(
+        self,
+        own_positions: np.ndarray,
+        *,
+        obstacles: Sequence[CircularObstacle | PolygonObstacle] = (),
+        descriptors: Sequence[StaticObstacleDescriptor] | None = None,
+    ) -> np.ndarray:
+        positions = np.asarray(own_positions, dtype=float)
+        if len(positions) == 0:
+            return np.zeros(0, dtype=float)
+        descriptor_list = list(descriptors or [])
+        if not descriptor_list and obstacles:
+            for obstacle in obstacles:
+                if isinstance(obstacle, CircularObstacle):
+                    descriptor_list.append(
+                        CircularObstacleDescriptor(center=np.asarray(obstacle.center, dtype=float), radius=float(obstacle.radius))
+                    )
+                else:
+                    vertices = np.asarray(obstacle.vertices, dtype=float)
+                    descriptor_list.append(
+                        PolygonObstacleDescriptor(
+                            vertices=vertices,
+                            edge_starts=vertices,
+                            edge_ends=np.roll(vertices, -1, axis=0),
+                            bounding_box=np.array(
+                                [
+                                    float(np.min(vertices[:, 0])),
+                                    float(np.max(vertices[:, 0])),
+                                    float(np.min(vertices[:, 1])),
+                                    float(np.max(vertices[:, 1])),
+                                ],
+                                dtype=float,
+                            ),
+                        )
+                    )
+        if not descriptor_list:
+            return np.full(len(positions), np.inf, dtype=float)
+        clearance = np.full(len(positions), np.inf, dtype=float)
+        for obstacle in descriptor_list:
+            if isinstance(obstacle, CircularObstacleDescriptor):
+                distance = np.linalg.norm(positions - np.asarray(obstacle.center, dtype=float), axis=1) - float(obstacle.radius)
             else:
-                vertices = np.asarray(obstacle.vertices, dtype=float)
-                edge_distances = [
-                    self._distance_to_segment(own_position, vertices[i], vertices[(i + 1) % len(vertices)])
-                    for i in range(len(vertices))
-                ]
-                distance = min(edge_distances)
-                if self._point_in_polygon(own_position, vertices):
-                    distance = -distance
-            clearance = min(clearance, distance)
+                edge_distances = self._distance_to_segments_series(positions, obstacle.edge_starts, obstacle.edge_ends)
+                bbox = np.asarray(obstacle.bounding_box, dtype=float)
+                candidate_mask = (
+                    (positions[:, 0] >= bbox[0])
+                    & (positions[:, 0] <= bbox[1])
+                    & (positions[:, 1] >= bbox[2])
+                    & (positions[:, 1] <= bbox[3])
+                )
+                inside = np.zeros(len(positions), dtype=bool)
+                if np.any(candidate_mask):
+                    inside[candidate_mask] = self._point_in_polygon_series(positions[candidate_mask], obstacle.vertices)
+                distance = edge_distances
+                distance[inside] = -distance[inside]
+            clearance = np.minimum(clearance, distance)
         return clearance
 
     def _clearance_risk(self, clearance: float) -> float:
@@ -155,6 +327,12 @@ class ShipDomainRiskModel:
         spatial = np.exp(-dcpa / safety)
         temporal = np.exp(-tcpa / max(self.problem_config.tcpa_decay_seconds, 1.0))
         return float(spatial * temporal)
+
+    def _dcpa_risk_series(self, dcpa: np.ndarray, tcpa: np.ndarray) -> np.ndarray:
+        safety = max(self.problem_config.safety_clearance, 1.0)
+        spatial = np.exp(-np.asarray(dcpa, dtype=float) / safety)
+        temporal = np.exp(-np.asarray(tcpa, dtype=float) / max(self.problem_config.tcpa_decay_seconds, 1.0))
+        return (spatial * temporal).astype(float)
 
     @staticmethod
     def _colreg_scale(role: str) -> float:
@@ -172,6 +350,7 @@ class ShipDomainRiskModel:
         target_trajectories: Iterable[Trajectory],
         *,
         static_obstacles: Sequence[CircularObstacle | PolygonObstacle] = (),
+        static_obstacle_descriptors: Sequence[StaticObstacleDescriptor] | None = None,
         environment: EnvironmentField | None = None,
         colreg_roles: dict[str, str] | None = None,
         target_names: Sequence[str] | None = None,
@@ -216,55 +395,69 @@ class ShipDomainRiskModel:
         tcpa_series = np.full(count, np.inf, dtype=float)
         colreg_scale_series = np.ones(count, dtype=float)
         dt = own_traj.times[1] - own_traj.times[0] if len(own_traj.times) > 1 else 0.0
+        own_positions = np.asarray(own_traj.positions, dtype=float)
+        own_headings = np.asarray(own_traj.headings, dtype=float)
+        own_velocities = self._trajectory_velocities(own_traj)
 
-        for idx in range(count):
-            obstacle_clearance = self._obstacle_clearance(own_traj.positions[idx], static_obstacles)
-            static_clearance_series[idx] = obstacle_clearance
-            obstacle_risk[idx] = self._clearance_risk(obstacle_clearance)
-            if environment is not None:
-                environment_risk[idx] = min(2.0, environment.scalar_risk_at(own_traj.positions[idx], own_traj.times[idx]))
+        static_clearance_series = self._obstacle_clearance_series(
+            own_positions,
+            obstacles=static_obstacles,
+            descriptors=static_obstacle_descriptors,
+        )
+        obstacle_risk = np.asarray([self._clearance_risk(float(clearance)) for clearance in static_clearance_series], dtype=float)
+        if environment is not None:
+            environment_risk = np.minimum(2.0, environment.scalar_risk_series(own_positions, own_traj.times))
 
-            step_domain = 0.0
-            step_dcpa_risk = 0.0
-            step_ship_distance = float("inf")
-            step_dcpa = float("inf")
-            step_tcpa = float("inf")
-            step_scale = 1.0
-            for target_idx, target in enumerate(targets):
-                sample_idx = min(idx, len(target.times) - 1)
-                ship_distance = float(np.linalg.norm(target.positions[sample_idx] - own_traj.positions[idx]))
-                step_ship_distance = min(step_ship_distance, ship_distance)
-                domain_value = self.instantaneous_domain_risk(
-                    own_position=own_traj.positions[idx],
-                    own_heading=own_traj.headings[idx],
-                    target_position=target.positions[sample_idx],
-                )
-                dcpa, tcpa = self._dcpa_tcpa(own_traj, target, sample_idx)
-                dcpa_value = self._dcpa_risk(dcpa, tcpa)
-                role = colreg_roles.get(target_names[target_idx], "")
-                scale = self._colreg_scale(role)
-                if domain_value * scale > step_domain * step_scale:
-                    step_domain = domain_value
-                    step_scale = scale
-                if dcpa_value > step_dcpa_risk:
-                    step_dcpa_risk = dcpa_value
-                step_dcpa = min(step_dcpa, dcpa)
-                step_tcpa = min(step_tcpa, tcpa)
+        best_scaled_domain = np.zeros(count, dtype=float)
+        step_domain = np.zeros(count, dtype=float)
+        step_dcpa_risk = np.zeros(count, dtype=float)
+        step_ship_distance = np.full(count, np.inf, dtype=float)
+        step_dcpa = np.full(count, np.inf, dtype=float)
+        step_tcpa = np.full(count, np.inf, dtype=float)
+        step_scale = np.ones(count, dtype=float)
 
-            domain_risk[idx] = step_domain
-            dcpa_risk[idx] = step_dcpa_risk
-            ship_distance_series[idx] = step_ship_distance
-            clearance_series[idx] = min(obstacle_clearance, step_ship_distance)
-            dcpa_series[idx] = step_dcpa
-            tcpa_series[idx] = step_tcpa
-            colreg_scale_series[idx] = step_scale
-            combined = (
-                self.problem_config.domain_risk_weight * step_domain
-                + self.problem_config.dcpa_risk_weight * step_dcpa_risk
-                + self.problem_config.obstacle_risk_weight * obstacle_risk[idx]
-                + self.problem_config.environment_risk_weight * environment_risk[idx]
-            ) * step_scale
-            risk[idx] = combined
+        for target_idx, target in enumerate(targets):
+            sample_indices = np.minimum(np.arange(count, dtype=int), max(len(target.times) - 1, 0))
+            target_positions = np.asarray(target.positions[sample_indices], dtype=float)
+            target_velocities = self._trajectory_velocities(target)[sample_indices]
+            ship_distance = np.linalg.norm(target_positions - own_positions, axis=1)
+            domain_value = self.instantaneous_domain_risk_series(
+                own_positions=own_positions,
+                own_headings=own_headings,
+                target_positions=target_positions,
+            )
+            dcpa, tcpa = self._dcpa_tcpa_series(
+                own_positions=own_positions,
+                own_velocities=own_velocities,
+                target_positions=target_positions,
+                target_velocities=target_velocities,
+            )
+            dcpa_value = self._dcpa_risk_series(dcpa, tcpa)
+            role = colreg_roles.get(target_names[target_idx], "")
+            scale = self._colreg_scale(role)
+            scaled_domain = domain_value * scale
+            better_domain = scaled_domain > best_scaled_domain
+            best_scaled_domain = np.where(better_domain, scaled_domain, best_scaled_domain)
+            step_domain = np.where(better_domain, domain_value, step_domain)
+            step_scale = np.where(better_domain, scale, step_scale)
+            step_dcpa_risk = np.maximum(step_dcpa_risk, dcpa_value)
+            step_ship_distance = np.minimum(step_ship_distance, ship_distance)
+            step_dcpa = np.minimum(step_dcpa, dcpa)
+            step_tcpa = np.minimum(step_tcpa, tcpa)
+
+        domain_risk = step_domain
+        dcpa_risk = step_dcpa_risk
+        ship_distance_series = step_ship_distance
+        clearance_series = np.minimum(static_clearance_series, ship_distance_series)
+        dcpa_series = step_dcpa
+        tcpa_series = step_tcpa
+        colreg_scale_series = step_scale
+        risk = (
+            self.problem_config.domain_risk_weight * domain_risk
+            + self.problem_config.dcpa_risk_weight * dcpa_risk
+            + self.problem_config.obstacle_risk_weight * obstacle_risk
+            + self.problem_config.environment_risk_weight * environment_risk
+        ) * colreg_scale_series
 
         intrusion_time = float(np.sum(risk >= 1.0) * dt)
         min_clearance = float(np.min(clearance_series)) if clearance_series.size else float("inf")

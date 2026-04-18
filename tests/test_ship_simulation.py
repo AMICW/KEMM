@@ -1,4 +1,5 @@
 import os
+import json
 import unittest
 from contextlib import ExitStack
 from dataclasses import replace
@@ -11,7 +12,7 @@ import numpy as np
 
 from kemm.core.types import KEMMConfig as RuntimeKEMMConfig
 from reporting_config import PublicationStyle, ShipPlotConfig, interactive_bundle_path
-from ship_simulation.config import DemoConfig, KEMMConfig, apply_experiment_profile, build_default_config
+from ship_simulation.config import DemoConfig, KEMMConfig, apply_experiment_profile, build_default_config, build_default_demo_config
 from ship_simulation.core.collision_risk import RiskBreakdown
 from ship_simulation.core.environment import GridScalarField, GridVectorField
 from ship_simulation.optimizer.episode import PlanningEpisodeResult, PlanningStepResult, RollingHorizonPlanner
@@ -229,6 +230,106 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         self.assertEqual(own_wrap.call_count, 1)
         self.assertEqual(target_wrap.call_count, 0)
         np.testing.assert_allclose(first.objectives, second.objectives)
+
+    def test_environment_batch_api_matches_scalar_sampling(self):
+        environment = self.interface.problem.environment
+        positions = np.array(
+            [
+                [0.0, -480.0],
+                [1200.0, -900.0],
+                [2600.0, -150.0],
+                [4100.0, 600.0],
+                [5600.0, 1200.0],
+            ],
+            dtype=float,
+        )
+        times = np.array([0.0, 45.0, 90.0, 135.0, 180.0], dtype=float)
+
+        scalar_expected = np.asarray([environment.scalar_risk_at(position, time_s) for position, time_s in zip(positions, times)], dtype=float)
+        vector_expected = np.asarray([environment.vector_field_at(position, time_s) for position, time_s in zip(positions, times)], dtype=float)
+        drift_expected = np.asarray([environment.drift_velocity(position, time_s) for position, time_s in zip(positions, times)], dtype=float)
+
+        np.testing.assert_allclose(environment.scalar_risk_series(positions, times), scalar_expected, atol=1e-9, rtol=0.0)
+        np.testing.assert_allclose(environment.vector_field_series(positions, times), vector_expected, atol=1e-9, rtol=0.0)
+        np.testing.assert_allclose(environment.drift_series(positions, times), drift_expected, atol=1e-9, rtol=0.0)
+
+    def test_ship_risk_model_batch_path_matches_scalar_reference(self):
+        problem = self.interface.problem
+        evaluation = problem.simulate(problem.initial_guess())
+        own_traj = evaluation.own_trajectory
+        targets = evaluation.target_trajectories
+        target_names = [target.name for target in self.scenario.target_ships]
+        model = problem.risk_model
+        batch = model.evaluate(
+            own_traj,
+            targets,
+            static_obstacles=self.scenario.static_obstacles,
+            static_obstacle_descriptors=problem._static_obstacle_descriptors,
+            environment=problem.environment,
+            colreg_roles=self.scenario.metadata.colreg_roles,
+            target_names=target_names,
+        )
+
+        count = len(own_traj.times)
+        dt = own_traj.times[1] - own_traj.times[0] if count > 1 else 0.0
+        risk = np.zeros(count, dtype=float)
+        clearance_series = np.full(count, np.inf, dtype=float)
+        static_clearance_series = np.full(count, np.inf, dtype=float)
+        ship_distance_series = np.full(count, np.inf, dtype=float)
+        dcpa_series = np.full(count, np.inf, dtype=float)
+        tcpa_series = np.full(count, np.inf, dtype=float)
+
+        for idx in range(count):
+            obstacle_clearance = model._obstacle_clearance(
+                own_traj.positions[idx],
+                descriptors=problem._static_obstacle_descriptors,
+            )
+            static_clearance_series[idx] = obstacle_clearance
+            obstacle_risk = model._clearance_risk(obstacle_clearance)
+            environment_risk = min(2.0, problem.environment.scalar_risk_at(own_traj.positions[idx], own_traj.times[idx]))
+
+            step_domain = 0.0
+            step_scale = 1.0
+            step_dcpa_risk = 0.0
+            step_ship_distance = float("inf")
+            step_dcpa = float("inf")
+            step_tcpa = float("inf")
+            for target_idx, target in enumerate(targets):
+                sample_idx = min(idx, len(target.times) - 1)
+                ship_distance = float(np.linalg.norm(target.positions[sample_idx] - own_traj.positions[idx]))
+                step_ship_distance = min(step_ship_distance, ship_distance)
+                domain_value = model.instantaneous_domain_risk(
+                    own_position=own_traj.positions[idx],
+                    own_heading=own_traj.headings[idx],
+                    target_position=target.positions[sample_idx],
+                )
+                dcpa, tcpa = model._dcpa_tcpa(own_traj, target, sample_idx)
+                dcpa_value = model._dcpa_risk(dcpa, tcpa)
+                scale = model._colreg_scale(self.scenario.metadata.colreg_roles.get(target_names[target_idx], ""))
+                if domain_value * scale > step_domain * step_scale:
+                    step_domain = domain_value
+                    step_scale = scale
+                step_dcpa_risk = max(step_dcpa_risk, dcpa_value)
+                step_dcpa = min(step_dcpa, dcpa)
+                step_tcpa = min(step_tcpa, tcpa)
+
+            clearance_series[idx] = min(obstacle_clearance, step_ship_distance)
+            ship_distance_series[idx] = step_ship_distance
+            dcpa_series[idx] = step_dcpa
+            tcpa_series[idx] = step_tcpa
+            risk[idx] = (
+                self.config.domain_risk_weight * step_domain
+                + self.config.dcpa_risk_weight * step_dcpa_risk
+                + self.config.obstacle_risk_weight * obstacle_risk
+                + self.config.environment_risk_weight * environment_risk
+            ) * step_scale
+
+        self.assertAlmostEqual(batch.max_risk, float(np.max(risk)), places=9)
+        self.assertAlmostEqual(batch.mean_risk, float(np.mean(risk)), places=9)
+        self.assertAlmostEqual(batch.intrusion_time, float(np.sum(risk >= 1.0) * dt), places=9)
+        self.assertAlmostEqual(batch.min_clearance, float(np.min(clearance_series)), places=9)
+        self.assertAlmostEqual(batch.min_dcpa, float(np.min(dcpa_series[np.isfinite(dcpa_series)])), places=9)
+        self.assertAlmostEqual(batch.min_tcpa, float(np.min(tcpa_series[np.isfinite(tcpa_series)])), places=9)
 
     def test_local_scoring_penalizes_clearance_shortfall_in_objectives(self):
         problem = self.interface.problem
@@ -715,6 +816,7 @@ class ShipSimulationSmokeTests(unittest.TestCase):
 
         demo = DemoConfig()
         demo.n_runs = 1
+        demo.episode_cache_enabled = False
         self_test = self
         tmp_root = Path("ship_simulation/outputs/test_artifacts/default_report_stub")
         tmp_root.mkdir(parents=True, exist_ok=True)
@@ -751,6 +853,94 @@ class ShipSimulationSmokeTests(unittest.TestCase):
                 except OSError:
                     pass
         self.assertIn("harbor_clutter", recorded)
+
+    def test_default_demo_config_uses_full_tuned_profile(self):
+        demo = build_default_demo_config()
+        self.assertEqual(demo.scenario_profiles.active_profile_name, "full_tuned")
+
+    def test_report_episode_cache_reuses_cached_episodes(self):
+        planner_calls: list[str] = []
+
+        class DummyPlanner:
+            def __init__(self, scenario, config, demo_config):
+                self.scenario = scenario
+
+            def run(self, optimizer_name="kemm"):
+                planner_calls.append(optimizer_name)
+                scenario_key = self.scenario.name.lower().replace(" ", "_").replace("-", "_")
+                return self_test._stub_episode(scenario_key, optimizer_name=optimizer_name)
+
+        demo = build_default_demo_config()
+        demo.n_runs = 1
+        demo.report_algorithms = ("random",)
+        demo.render_workers = 1
+        self_test = self
+        tmp_root = Path("ship_simulation/outputs/test_artifacts") / f"episode_cache_stub_{int(np.random.randint(1_000_000))}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        try:
+            with patch.object(run_report_module, "RollingHorizonPlanner", DummyPlanner):
+                run_report_module.generate_report_with_config(
+                    config=self.config,
+                    demo_config=demo,
+                    output_root=tmp_root,
+                    plot_config=ShipPlotConfig(style=PublicationStyle(dpi=120)),
+                    scenario_keys=["crossing"],
+                    algorithm_keys=["random"],
+                    verbose=False,
+                    n_runs=1,
+                    render_figures=False,
+                )
+                first_metadata = json.loads((tmp_root / "raw" / "report_metadata.json").read_text(encoding="utf-8"))
+                run_report_module.generate_report_with_config(
+                    config=self.config,
+                    demo_config=demo,
+                    output_root=tmp_root,
+                    plot_config=ShipPlotConfig(style=PublicationStyle(dpi=120)),
+                    scenario_keys=["crossing"],
+                    algorithm_keys=["random"],
+                    verbose=False,
+                    n_runs=1,
+                    render_figures=False,
+                )
+                second_metadata = json.loads((tmp_root / "raw" / "report_metadata.json").read_text(encoding="utf-8"))
+                changed_demo = replace(demo, random_search_seed=demo.random_search_seed + 7)
+                run_report_module.generate_report_with_config(
+                    config=self.config,
+                    demo_config=changed_demo,
+                    output_root=tmp_root,
+                    plot_config=ShipPlotConfig(style=PublicationStyle(dpi=120)),
+                    scenario_keys=["crossing"],
+                    algorithm_keys=["random"],
+                    verbose=False,
+                    n_runs=1,
+                    render_figures=False,
+                )
+                third_metadata = json.loads((tmp_root / "raw" / "report_metadata.json").read_text(encoding="utf-8"))
+        finally:
+            for path in sorted(tmp_root.rglob("*"), reverse=True):
+                if path.is_file():
+                    try:
+                        path.unlink()
+                    except PermissionError:
+                        pass
+                elif path.is_dir():
+                    try:
+                        path.rmdir()
+                    except OSError:
+                        pass
+            if tmp_root.exists():
+                try:
+                    tmp_root.rmdir()
+                except OSError:
+                    pass
+
+        self.assertEqual(planner_calls, ["random", "random"])
+        self.assertEqual(first_metadata["episode_cache_hits"], 0)
+        self.assertEqual(first_metadata["episode_cache_misses"], 1)
+        self.assertEqual(second_metadata["episode_cache_hits"], 1)
+        self.assertEqual(second_metadata["episode_cache_misses"], 0)
+        self.assertEqual(third_metadata["episode_cache_hits"], 0)
+        self.assertEqual(third_metadata["episode_cache_misses"], 1)
 
     def test_report_algorithm_registry_is_configurable(self):
         recorded_algorithms: list[str] = []
@@ -790,6 +980,7 @@ class ShipSimulationSmokeTests(unittest.TestCase):
         demo = DemoConfig()
         demo.n_runs = 1
         demo.report_algorithms = ("random", "kemm")
+        demo.episode_cache_enabled = False
         self_test = self
         tmp_root = Path("ship_simulation/outputs/test_artifacts/algorithm_registry_stub")
         tmp_root.mkdir(parents=True, exist_ok=True)
@@ -867,6 +1058,101 @@ class ShipSimulationSmokeTests(unittest.TestCase):
             values = problem.evaluate_population(population)
         self.assertEqual(values.shape, (3, 4))
         self.assertEqual(wrapped.call_count, 1)
+
+    def test_aggregate_rows_include_confidence_interval_fields(self):
+        first = self._stub_episode("crossing", optimizer_name="kemm")
+        second = self._stub_episode("crossing", optimizer_name="kemm")
+        second.final_evaluation.objectives = second.final_evaluation.objectives + np.array([0.5, 0.8, 0.01], dtype=float)
+        first.analysis_metrics["runtime"] = 1.2
+        second.analysis_metrics["runtime"] = 1.6
+        rows = [
+            run_report_module._episode_row("crossing", "kemm", 0, first),
+            run_report_module._episode_row("crossing", "kemm", 1, second),
+        ]
+        aggregates = run_report_module._aggregate_rows(rows)
+        self.assertEqual(len(aggregates), 1)
+        payload = aggregates[0]
+        self.assertIn("fuel_ci_low", payload)
+        self.assertIn("fuel_ci_high", payload)
+        self.assertIn("runtime_ci_low", payload)
+        self.assertIn("runtime_ci_high", payload)
+        self.assertIn("success_rate_ci_low", payload)
+        self.assertIn("success_rate_ci_high", payload)
+
+    def test_statistical_tests_compare_kemm_against_baseline(self):
+        kemm_episode = self._stub_episode("crossing", optimizer_name="kemm")
+        random_episode = self._stub_episode("crossing", optimizer_name="random")
+        random_episode.final_evaluation.objectives = random_episode.final_evaluation.objectives + np.array([2.0, 2.0, 0.2], dtype=float)
+        rows = [
+            run_report_module._episode_row("crossing", "kemm", 0, kemm_episode),
+            run_report_module._episode_row("crossing", "random", 0, random_episode),
+        ]
+        tests = run_report_module._build_statistical_tests(rows)
+        self.assertTrue(any(item["comparison_optimizer"] == "Random" for item in tests))
+        self.assertTrue(any(item["metric"] == "risk" for item in tests))
+
+    def test_report_exports_strict_comparable_and_robustness_outputs(self):
+        planner_calls: list[str] = []
+
+        class DummyPlanner:
+            def __init__(self, scenario, config, demo_config):
+                self.scenario = scenario
+
+            def run(self, optimizer_name="kemm"):
+                planner_calls.append(optimizer_name)
+                scenario_key = self.scenario.name.lower().replace(" ", "_").replace("-", "_")
+                return self_test._stub_episode(scenario_key, optimizer_name=optimizer_name)
+
+        demo = build_default_demo_config()
+        demo.n_runs = 1
+        demo.report_algorithms = ("kemm", "random")
+        demo.episode_cache_enabled = False
+        self_test = self
+        tmp_root = Path("ship_simulation/outputs/test_artifacts") / f"strict_robust_stub_{int(np.random.randint(1_000_000))}"
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        try:
+            with patch.object(run_report_module, "RollingHorizonPlanner", DummyPlanner):
+                run_report_module.generate_report_with_config(
+                    config=self.config,
+                    demo_config=demo,
+                    output_root=tmp_root,
+                    plot_config=ShipPlotConfig(style=PublicationStyle(dpi=120)),
+                    scenario_keys=["crossing"],
+                    algorithm_keys=["kemm", "random"],
+                    verbose=False,
+                    n_runs=1,
+                    render_figures=False,
+                    strict_comparable=True,
+                    robustness_sweep=True,
+                    robustness_levels=[0.0, 0.5],
+                    robustness_scenarios=["crossing"],
+                )
+            metadata = json.loads((tmp_root / "raw" / "report_metadata.json").read_text(encoding="utf-8"))
+            robustness = json.loads((tmp_root / "raw" / "robustness_summary.json").read_text(encoding="utf-8"))
+            algorithms = [item["key"] for item in metadata["algorithms"]]
+            self.assertIn("random_matched", algorithms)
+            self.assertTrue(metadata["strict_comparable"])
+            self.assertTrue(metadata["robustness_sweep_enabled"])
+            self.assertEqual(robustness["levels"], [0.0, 0.5])
+            self.assertGreater(metadata["statistical_test_count"], 0)
+        finally:
+            for path in sorted(tmp_root.rglob("*"), reverse=True):
+                if path.is_file():
+                    try:
+                        path.unlink()
+                    except PermissionError:
+                        pass
+                elif path.is_dir():
+                    try:
+                        path.rmdir()
+                    except OSError:
+                        pass
+            if tmp_root.exists():
+                try:
+                    tmp_root.rmdir()
+                except OSError:
+                    pass
+        self.assertIn("random", planner_calls)
 
 
 if __name__ == "__main__":

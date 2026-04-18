@@ -16,6 +16,8 @@ from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch, Polygon,
 
 
 ROOT = Path(__file__).resolve().parent
+PRIVATE_PATENT_DIR = ROOT.parents[1] / ".private" / "patent_ship_kemm"
+PRIVATE_FIGURE_INDEX = PRIVATE_PATENT_DIR / "04_附图索引与图稿说明_详细版.md"
 
 
 @dataclass(frozen=True)
@@ -131,7 +133,7 @@ FIGURE_DOCS = {
             "最后看右侧，理解论文版和专利版的输出边界。",
         ],
         "usage": "主要用于内部制图规范、老师沟通和后续继续扩图时保持风格统一，通常不直接进论文正文或专利正文。",
-        "refs": ["本目录全部图稿", "../patent_figures_plan_ship_kemm.md"],
+        "refs": ["本目录全部图稿", "90_撰写工作台与删减建议.md"],
     },
     "fig01_system_architecture": {
         "summary": "该图展示发明的总体系统架构，回答“系统由哪些输入、模块和输出组成”，同时明确 ship 实施方式中场景感知绕行初值与统一候选竞争的关系，是整套方法的总览图。",
@@ -156,7 +158,7 @@ FIGURE_DOCS = {
             "最后看右侧：真正输出由 `180/190/200` 这一统一竞争与执行链给出。",
         ],
         "usage": "论文中适合作为方法总览图；专利中适合作为装置实施方式和系统总体架构图，也是摘要附图备选。",
-        "refs": ["../patent_specification_ship_kemm_draft.md", "../patent_figures_plan_ship_kemm.md"],
+        "refs": ["01_发明专利说明书_详细扩展版.md", "90_撰写工作台与删减建议.md"],
     },
     "fig02_method_flow": {
         "summary": "该图展示方法执行顺序，回答“系统实际是按什么步骤运行的”，并补充说明 ship 实施方式中启发式绕行初值如何插入主流程，是主权项最直接的图示表达。",
@@ -180,7 +182,7 @@ FIGURE_DOCS = {
             "最后看下排和底部虚线，理解“统一筛选 + 局部执行 + 再规划”的闭环。",
         ],
         "usage": "这是最适合放在摘要页和专利摘要附图位置的一张图；论文里也可以作为方法章节第一张图。",
-        "refs": ["../patent_specification_ship_kemm_draft.md", "../patent_abstract_ship_kemm_draft.md"],
+        "refs": ["01_发明专利说明书_详细扩展版.md", "03_摘要与摘要附图说明_详细版.md"],
     },
     "fig03_change_diagnosis_allocation": {
         "summary": "该图聚焦 KEMM 的第一个核心创新：环境变化诊断与自适应分配。",
@@ -201,7 +203,7 @@ FIGURE_DOCS = {
             "最后看右侧四个输出，理解预算分配是诊断的结果，而不是先验固定比例。",
         ],
         "usage": "论文中用于单独解释算法创新点；专利中用于支撑“先诊断再分配”的技术逻辑。",
-        "refs": ["../patent_specification_ship_kemm_draft.md", "../patent_claims_ship_kemm_final.md"],
+        "refs": ["01_发明专利说明书_详细扩展版.md", "02_权利要求书_详细扩展版.md"],
     },
     "fig04_multisource_candidates": {
         "summary": "该图聚焦 KEMM 的第二个核心创新：多源候选协同生成。",
@@ -222,7 +224,7 @@ FIGURE_DOCS = {
             "注意该图刻意强调“提名候选”而不是“直接输出结果”。",
         ],
         "usage": "论文里适合对应消融实验、模块介绍和创新点拆解；专利里适合作为多源候选技术方案的支撑图。",
-        "refs": ["../patent_specification_ship_kemm_draft.md", "../patent_figures_plan_ship_kemm.md"],
+        "refs": ["01_发明专利说明书_详细扩展版.md", "90_撰写工作台与删减建议.md"],
     },
     "fig05_candidate_pool_selection": {
         "summary": "该图解释 KEMM 的关键收束机制，回答“多源候选为什么不会失控”。",
@@ -244,7 +246,7 @@ FIGURE_DOCS = {
             "右侧的解集与代表轨迹并列出现，说明系统既保留 Pareto 信息，也输出实际执行对象。",
         ],
         "usage": "论文里适合解释算法稳健性的来源；专利里适合支撑“统一候选池 + 约束支配环境选择”的关键权利要求。",
-        "refs": ["../patent_specification_ship_kemm_draft.md", "../patent_claims_ship_kemm_final.md"],
+        "refs": ["01_发明专利说明书_详细扩展版.md", "02_权利要求书_详细扩展版.md"],
     },
     "fig06_rolling_replanning": {
         "summary": "该图展示 KEMM 在船舶场景中的执行方式，回答“算法如何从一次求解变成持续规划”。",
@@ -265,7 +267,7 @@ FIGURE_DOCS = {
             "最后看上方虚线回路，理解为什么该方法适合动态海上环境。",
         ],
         "usage": "论文中用于把优化框架和应用场景连接起来；专利中用于支撑方法执行机制和实施方式。",
-        "refs": ["../patent_specification_ship_kemm_draft.md", "../ship_simulation_reference.md"],
+        "refs": ["01_发明专利说明书_详细扩展版.md", "../../docs/ship_simulation_reference.md"],
     },
     "fig07_crossing_scene": {
         "summary": "该图是实施例一的场景平面图，用于把抽象算法放回交叉会遇的物理语义环境中。",
@@ -286,7 +288,7 @@ FIGURE_DOCS = {
             "最后看障碍、风险场和流场，理解为什么轨迹会产生特定偏转。",
         ],
         "usage": "论文里适合作为案例场景图；专利里对应实施例一，用于说明方法在交叉会遇场景中的落地。",
-        "refs": ["../patent_specification_ship_kemm_draft.md", "../../ship_simulation/scenario/generator.py"],
+        "refs": ["01_发明专利说明书_详细扩展版.md", "../../ship_simulation/scenario/generator.py"],
     },
     "fig08_harbor_clutter_scene": {
         "summary": "该图是实施例二的场景平面图，用于说明方法在港口高密障碍、受限航道和多目标船会遇条件下的应用。",
@@ -307,7 +309,7 @@ FIGURE_DOCS = {
             "最后看代表轨迹穿越窄通道的方式，理解该方法在复杂场景中的规划策略。",
         ],
         "usage": "论文里适合作为高密障碍案例主图；专利里对应实施例二，用于说明方法在港口受限水域中的适用性。",
-        "refs": ["../patent_specification_ship_kemm_draft.md", "../../ship_simulation/scenario/generator.py"],
+        "refs": ["01_发明专利说明书_详细扩展版.md", "../../ship_simulation/scenario/generator.py"],
     },
     "fig09_graphical_abstract": {
         "summary": "该图是论文专用视觉摘要，用一页横向信息图压缩表达研究动机、方法核心和结果价值。",
@@ -328,7 +330,7 @@ FIGURE_DOCS = {
             "它与专利附图不同，更强调概念压缩和视觉可读性。",
         ],
         "usage": "仅用于论文、汇报或海报展示，不用于专利黑白附图。",
-        "refs": ["../patent_abstract_ship_kemm_draft.md", "../figure_catalog.md"],
+        "refs": ["03_摘要与摘要附图说明_详细版.md", "../../docs/figure_catalog.md"],
     },
     "fig10_kemm_principle_chain": {
         "summary": "该图是论文专用的算法原理解释图，用更强的阶段叙事解释 KEMM 的核心工作逻辑。",
@@ -349,7 +351,7 @@ FIGURE_DOCS = {
             "最后看底部闭环，理解算法为什么适用于动态环境。",
         ],
         "usage": "适合作为论文方法章节里的“原理总览图”，也适合老师汇报和答辩时先讲思路再讲实现。",
-        "refs": ["../patent_specification_ship_kemm_draft.md", "../kemm_reference.md"],
+        "refs": ["01_发明专利说明书_详细扩展版.md", "../../docs/kemm_reference.md"],
     },
     "fig11_module_role_map": {
         "summary": "该图是论文专用的模块职责解释图，用于解释 memory、prediction、transfer、reinit 各自在什么变化情形下发挥作用。",
@@ -369,7 +371,7 @@ FIGURE_DOCS = {
             "把这张图和图4配合使用，可以同时解释模块职责和系统协同。",
         ],
         "usage": "适合论文中的模块介绍、老师汇报时解释创新点，也适合和消融实验一起展示。",
-        "refs": ["../kemm_reference.md", "../figure_catalog.md"],
+        "refs": ["../../docs/kemm_reference.md", "../../docs/figure_catalog.md"],
     },
 }
 
@@ -1439,11 +1441,12 @@ def themes_for_stem(stem: str) -> tuple[Theme, ...]:
 
 
 def write_index(generated: dict[str, list[Path]]) -> None:
+    PRIVATE_PATENT_DIR.mkdir(parents=True, exist_ok=True)
     lines = [
-        "# KEMM 船舶专利图稿输出索引",
+        "# KEMM 船舶专利附图索引与图稿说明详细版",
         "",
-        "本文档由 `docs/patent_figures/generate_patent_figures.py` 自动生成。",
-        "它不只是文件清单，还用于说明每张图表达的技术含义、关键视觉元素、阅读顺序和论文 / 专利中的使用位置。",
+        "本文档由 `docs/patent_figures/generate_patent_figures.py` 自动生成，并输出到本地私有目录 `.private/patent_ship_kemm/`。",
+        "它不只是文件清单，还用于说明每张图表达的技术含义、关键视觉元素、阅读顺序和论文 / 专利中的使用位置。当前文件名已切换为中文，以便后续直接作为专利材料目录的一部分管理。",
         "",
         "## 输出目录",
         "",
@@ -1459,7 +1462,7 @@ def write_index(generated: dict[str, list[Path]]) -> None:
         "- 论文版优先服务于方法表达、汇报展示和论文排版，默认弱化或隐藏专利构件号，减少视觉干扰。",
         "- 专利黑白版优先服务于附图提交，保留必要构件号，要求在灰度打印下仍可区分层级。",
         "- 图1到图8是专利主案核心图号；图9到图11是论文 / 汇报专用解释图，不进入专利黑白版。",
-        "- 若后续继续修改图稿，请优先修改 `generate_patent_figures.py` 后再重新导出，避免 README 与实际图稿脱节。",
+        "- 若后续继续修改图稿，请优先修改 `generate_patent_figures.py` 后再重新导出，避免私有图稿索引与实际图稿脱节。",
         "",
         "## 图稿详解",
         "",
@@ -1502,7 +1505,7 @@ def write_index(generated: dict[str, list[Path]]) -> None:
             rel = path.relative_to(ROOT).as_posix()
             lines.append(f"- `{rel}`")
         lines.append("")
-    (ROOT / "README.md").write_text("\n".join(lines), encoding="utf-8")
+    PRIVATE_FIGURE_INDEX.write_text("\n".join(lines), encoding="utf-8")
 
 
 def generate(selected: Iterable[str] | None = None) -> dict[str, list[Path]]:

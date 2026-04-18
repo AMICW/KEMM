@@ -188,6 +188,63 @@ class RollingHorizonPlanner:
         self.demo_config = demo_config
         self.dt = self.config.simulation.dt
         self._kemm_solver: ShipKEMMOptimizer | None = None
+        self._active_problem_config: ProblemConfig | None = None
+        self._active_demo_config: DemoConfig | None = None
+
+    @staticmethod
+    def _scenario_profile_key(scenario: EncounterScenario) -> str:
+        known = {"head_on", "crossing", "overtaking", "harbor_clutter"}
+        candidates = {
+            scenario.name.strip().lower().replace(" ", "_").replace("-", "_"),
+            str(getattr(scenario.metadata, "family", "")).strip().lower(),
+        }
+        candidates.update(str(tag).strip().lower() for tag in getattr(scenario.metadata, "tags", ()))
+        for key in known:
+            if key in candidates:
+                return key
+        for candidate in candidates:
+            if candidate in known:
+                return candidate
+        raise KeyError(f"Unable to resolve scenario solve profile key for scenario `{scenario.name}`.")
+
+    def _resolve_profile_configs(self) -> tuple[ProblemConfig, DemoConfig, str]:
+        scenario_key = self._scenario_profile_key(self.scenario)
+        profile = self.demo_config.scenario_profiles.resolve(
+            scenario_key,
+            demo=self.demo_config,
+            problem=self.config,
+        )
+        profile_config = replace(
+            self.config,
+            objective_weights=tuple(float(value) for value in profile.objective_weights),
+            safety_clearance=float(profile.safety_clearance),
+            soft_clearance_penalty_per_meter=float(profile.soft_clearance_penalty_per_meter),
+            hard_clearance_penalty_per_meter=float(profile.hard_clearance_penalty_per_meter),
+            time_safety_penalty_weight=float(profile.time_safety_penalty_weight),
+            risk_safety_penalty_weight=float(profile.risk_safety_penalty_weight),
+            domain_risk_weight=float(profile.domain_risk_weight),
+        )
+        profile_demo = replace(
+            self.demo_config,
+            random_search_samples=int(profile.random_search_samples),
+            evolutionary_baseline_pop_size=int(profile.evolutionary_baseline_pop_size),
+            evolutionary_baseline_generations=int(profile.evolutionary_baseline_generations),
+            kemm=replace(
+                self.demo_config.kemm,
+                pop_size=int(profile.kemm_pop_size),
+                generations=int(profile.kemm_generations),
+                initial_guess_copies=int(profile.kemm_initial_guess_copies),
+                heuristic_detour_limit=int(profile.kemm_heuristic_detour_limit),
+                reuse_solver_state_across_replans=bool(profile.kemm_reuse_solver_state),
+            ),
+            episode=replace(
+                self.demo_config.episode,
+                local_horizon=float(profile.local_horizon),
+                execution_horizon=float(profile.execution_horizon),
+                max_replans=int(profile.max_replans),
+            ),
+        )
+        return profile_config, profile_demo, scenario_key
 
     @staticmethod
     def _scale_scalar_layers(layers: Sequence[object], amplitude_scale: float) -> list[object]:
@@ -229,12 +286,18 @@ class RollingHorizonPlanner:
         scaled[:, 1] = centroid[1] + y_scale * (scaled[:, 1] - centroid[1])
         return replace(obstacle, vertices=scaled)
 
-    def _inject_channel_closure(self, scenario: EncounterScenario, change: ScenarioChangeStepConfig) -> list[KeepOutZone]:
+    def _inject_channel_closure(
+        self,
+        scenario: EncounterScenario,
+        change: ScenarioChangeStepConfig,
+        *,
+        safety_clearance: float,
+    ) -> list[KeepOutZone]:
         xmin, xmax, ymin, ymax = scenario.area
         x_center = float(change.closure_center_x if change.closure_center_x is not None else xmin + 0.58 * (xmax - xmin))
         half_width = max(float(change.closure_width) * 0.5, 60.0)
         gap_center = ymin + float(change.closure_gap_center_ratio) * (ymax - ymin)
-        gap_span = max(float(change.closure_gap_span_ratio) * (ymax - ymin), self.config.safety_clearance * 1.2)
+        gap_span = max(float(change.closure_gap_span_ratio) * (ymax - ymin), float(safety_clearance) * 1.2)
         gap_half = gap_span * 0.5
         x0 = x_center - half_width
         x1 = x_center + half_width
@@ -297,7 +360,13 @@ class RollingHorizonPlanner:
                 else:
                     tuned_obstacles.append(obstacle)
             if change.inject_channel_closure:
-                tuned_obstacles.extend(self._inject_channel_closure(tuned_scenario, change))
+                tuned_obstacles.extend(
+                    self._inject_channel_closure(
+                        tuned_scenario,
+                        change,
+                        safety_clearance=tuned_config.safety_clearance,
+                    )
+                )
             tuned_scenario = replace(
                 tuned_scenario,
                 target_ships=tuned_targets,
@@ -316,8 +385,11 @@ class RollingHorizonPlanner:
         return tuned_scenario, tuned_config, applied
 
     def run(self, optimizer_name: str = "kemm") -> PlanningEpisodeResult:
-        episode_cfg = self.demo_config.episode
+        active_config, active_demo, scenario_key = self._resolve_profile_configs()
+        episode_cfg = active_demo.episode
         self._kemm_solver = None
+        self._active_problem_config = active_config
+        self._active_demo_config = active_demo
         current_time = 0.0
         own_state = self.scenario.own_ship.initial_state
         target_states = [target.initial_state for target in self.scenario.target_ships]
@@ -330,12 +402,12 @@ class RollingHorizonPlanner:
 
         for step_idx in range(episode_cfg.max_replans):
             goal_margin = max(
-                self.config.simulation.arrival_tolerance,
-                self.config.ship.length * 0.4,
+                active_config.simulation.arrival_tolerance,
+                active_config.ship.length * 0.4,
             )
             local_cfg = replace(
-                self.config,
-                simulation=replace(self.config.simulation, horizon=episode_cfg.local_horizon),
+                active_config,
+                simulation=replace(active_config.simulation, horizon=episode_cfg.local_horizon),
             )
             local_scenario = self.scenario.with_updated_states(
                 own_state,
@@ -397,11 +469,11 @@ class RollingHorizonPlanner:
         merged_own = _merge_trajectory_segments(own_segments)
         merged_targets = [_merge_trajectory_segments(segments) for segments in target_segments] if target_segments else []
         merged_own.reached_goal = float(np.linalg.norm(merged_own.positions[-1] - np.asarray(self.scenario.own_ship.goal, dtype=float))) <= max(
-            self.config.simulation.arrival_tolerance,
-            self.config.ship.length * 0.4,
+            active_config.simulation.arrival_tolerance,
+            active_config.ship.length * 0.4,
         )
         merged_own.terminal_distance = float(np.linalg.norm(merged_own.positions[-1] - np.asarray(self.scenario.own_ship.goal, dtype=float)))
-        scoring_problem = ShipTrajectoryProblem(self.scenario, self.config)
+        scoring_problem = ShipTrajectoryProblem(self.scenario, active_config)
         merged_risk = _merge_risk_segments(risk_segments, dt=self.dt)
         terminal_distance = float(merged_own.terminal_distance)
         fuel = float(scoring_problem.fuel_model.integrate(merged_own))
@@ -443,7 +515,7 @@ class RollingHorizonPlanner:
         )
         if self.config.experiment.enabled:
             analysis_metrics["scheduled_change_count"] = float(sum(len(step.applied_changes) for step in step_results))
-        return PlanningEpisodeResult(
+        episode = PlanningEpisodeResult(
             scenario_name=self.scenario.name,
             optimizer_name=optimizer_name,
             steps=step_results,
@@ -456,37 +528,46 @@ class RollingHorizonPlanner:
             analysis_metrics=analysis_metrics,
             convergence_history=convergence_history,
             terminated_reason=terminated_reason,
-            experiment_profile=self.config.experiment.profile_name,
+            experiment_profile=active_config.experiment.profile_name,
             change_history=[change for step in step_results for change in step.applied_changes],
-            problem_config=self.config,
+            problem_config=active_config,
         )
+        analysis_metrics["scenario_profile_name"] = active_demo.scenario_profiles.active_profile_name
+        analysis_metrics["scenario_profile_key"] = scenario_key
+        episode.analysis_metrics = analysis_metrics
+        self._active_problem_config = None
+        self._active_demo_config = None
+        return episode
 
     def _solve_local_problem(self, interface: ShipOptimizerInterface, optimizer_name: str, *, change_time: float):
         key = optimizer_name.lower()
+        active_demo = self._active_demo_config or self.demo_config
         if key == "kemm":
             if self._kemm_solver is None:
-                self._kemm_solver = ShipKEMMOptimizer(interface=interface, demo_config=self.demo_config)
+                self._kemm_solver = ShipKEMMOptimizer(interface=interface, demo_config=active_demo)
             return self._kemm_solver.optimize(interface=interface, change_time=change_time)
         if key == "nsga_style":
-            return ShipNSGAStyleOptimizer(interface=interface, demo_config=self.demo_config).optimize()
+            return ShipNSGAStyleOptimizer(interface=interface, demo_config=active_demo).optimize()
         if key == "random":
             return self._run_random_baseline(interface)
         raise ValueError(f"Unsupported optimizer_name: {optimizer_name}")
 
     def _run_random_baseline(self, interface: ShipOptimizerInterface):
         context = interface.build_context()
-        rng = np.random.default_rng(self.demo_config.random_search_seed)
+        active_demo = self._active_demo_config or self.demo_config
+        active_config = self._active_problem_config or self.config
+        rng = np.random.default_rng(active_demo.random_search_seed)
         lower = context.var_bounds[:, 0]
         upper = context.var_bounds[:, 1]
-        decisions = rng.uniform(lower, upper, size=(self.demo_config.random_search_samples, context.n_var))
+        decisions = rng.uniform(lower, upper, size=(active_demo.random_search_samples, context.n_var))
         decisions[0] = context.initial_guess
         fitness = context.evaluate_population(decisions)
         evaluations = interface.simulate_population(decisions, copy_results=False)
         best_idx = select_representative_index(
             fitness[:, :3],
             evaluations,
-            self.config.objective_weights,
-            safety_clearance=self.config.safety_clearance,
+            active_config.objective_weights,
+            safety_clearance=active_config.safety_clearance,
         )
         best_evaluation = interface.simulate(decisions[best_idx])
         pareto_idx = self._nondominated_indices(fitness[:, :3])
@@ -504,7 +585,7 @@ class RollingHorizonPlanner:
                 "best_risk": float(best_evaluation.objectives[2]),
                 "best_weighted_score": float(np.dot(
                     best_evaluation.objectives,
-                    np.asarray(self.config.objective_weights, dtype=float) / max(float(np.sum(self.config.objective_weights)), 1e-9),
+                    np.asarray(active_config.objective_weights, dtype=float) / max(float(np.sum(active_config.objective_weights)), 1e-9),
                 )),
             }],
             runtime_s=0.0,

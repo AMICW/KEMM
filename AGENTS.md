@@ -91,6 +91,10 @@
 
 4. 根目录旧文件应继续保持薄兼容。
    - 新逻辑不要再灌回根目录 legacy 文件
+5. ship 报告算法顺序和集合优先走 `DemoConfig.report_algorithms`。
+6. 严格可比实验优先走 `--strict-comparable` 自动注入 `*_matched` 分组，不要手工复制预算参数。
+7. 如果改了统计口径，同步维护 `raw/statistical_tests.*` 与 `reports/statistical_significance.md`。
+8. 如果改了扰动扫描口径，同步维护 `raw/robustness_*` 与 `reports/robustness_sweep.md`。
 
 ## 5. 关键结构化接口
 
@@ -113,10 +117,28 @@
 python -m unittest discover -s tests -v
 ```
 
+benchmark 最小逻辑验证：
+
+```bash
+python -m apps.benchmark_runner --quick --force-rerun --algorithms KEMM --problems FDA1
+```
+
 benchmark 快速回归：
 
 ```bash
-python run_experiments.py --quick --output-dir benchmark_outputs/smoke
+python -m apps.benchmark_runner --quick --output-dir benchmark_outputs/smoke
+```
+
+ship 最小逻辑验证：
+
+```bash
+python ship_simulation/run_report.py --quick --scenarios crossing --n-runs 1 --algorithms kemm --summary-only
+```
+
+ship 最新结构验证（严格可比 + 统计 + 鲁棒性）：
+
+```bash
+python ship_simulation/run_report.py --quick --summary-only --scenarios crossing --n-runs 1 --algorithms kemm random --strict-comparable --robustness-sweep --robustness-levels 0,0.5 --robustness-scenarios crossing
 ```
 
 ship 报告回归：

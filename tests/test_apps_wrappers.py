@@ -1,4 +1,7 @@
 import unittest
+import shutil
+from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -107,6 +110,131 @@ class AppWrapperTests(unittest.TestCase):
         self.assertEqual(set(runner.setting_results.keys()), {"5,10", "10,10"})
         self.assertEqual(results, runner.setting_results["10,10"])
         self.assertEqual(runner.igd_curves, runner.setting_igd_curves["10,10"])
+
+    def test_benchmark_runner_task_cache_reuses_previous_result(self):
+        cache_dir = Path("benchmark_outputs") / f"test_task_cache_{int(np.random.randint(1_000_000))}"
+
+        class TinyCacheConfig:
+            POP_SIZE = 4
+            N_VAR = 2
+            N_OBJ = 2
+            NT = 10
+            TAU_T = 10
+            SETTINGS = [(10, 10)]
+            CANONICAL_SETTING = (10, 10)
+            N_CHANGES = 1
+            GENS_PER_CHANGE = 1
+            N_RUNS = 1
+            PROBLEMS = ["FDA1"]
+            ALGORITHMS = {"RI": RI_DMOEA}
+            KEMM_CONFIG = KEMMConfig(benchmark_aware_prior=False, memory_online_epochs=1)
+            CACHE_ENABLED = True
+            FORCE_RERUN = False
+            CACHE_DIR = str(cache_dir)
+
+        runner = ExperimentRunner(TinyCacheConfig())
+        calls = {"count": 0}
+
+        def fake_run_single(*args, **kwargs):
+            _ = args, kwargs
+            calls["count"] += 1
+            return {
+                "migd": 0.1,
+                "sp": 0.2,
+                "ms": 0.3,
+                "time": 0.4,
+                "igd_curve": [0.5],
+                "hv_curve": [0.6],
+                "change_diagnostics": [],
+            }
+
+        runner._run_single = fake_run_single
+        runner._run_setting_sweep({"RI": RI_DMOEA}, progress_prefix="TST", collect_curves=False, collect_diagnostics=False)
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(runner.task_cache_hits, 0)
+        self.assertEqual(runner.task_cache_misses, 1)
+
+        runner._run_setting_sweep({"RI": RI_DMOEA}, progress_prefix="TST", collect_curves=False, collect_diagnostics=False)
+        self.assertEqual(calls["count"], 1)
+        self.assertEqual(runner.task_cache_hits, 1)
+        self.assertEqual(runner.task_cache_misses, 0)
+
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+    def test_benchmark_runner_skips_problem_aux_precompute_when_cache_is_warm(self):
+        cache_dir = Path("benchmark_outputs") / f"test_task_cache_warm_{int(np.random.randint(1_000_000))}"
+
+        class TinyWarmCacheConfig:
+            POP_SIZE = 4
+            N_VAR = 2
+            N_OBJ = 2
+            NT = 10
+            TAU_T = 10
+            SETTINGS = [(10, 10)]
+            CANONICAL_SETTING = (10, 10)
+            N_CHANGES = 1
+            GENS_PER_CHANGE = 1
+            N_RUNS = 1
+            PROBLEMS = ["FDA1"]
+            ALGORITHMS = {"RI": RI_DMOEA}
+            KEMM_CONFIG = KEMMConfig(benchmark_aware_prior=False, memory_online_epochs=1)
+            CACHE_ENABLED = True
+            FORCE_RERUN = False
+            CACHE_DIR = str(cache_dir)
+
+        runner = ExperimentRunner(TinyWarmCacheConfig())
+        runner._run_single = lambda *args, **kwargs: {
+            "migd": 0.1,
+            "sp": 0.2,
+            "ms": 0.3,
+            "time": 0.4,
+            "igd_curve": [0.5],
+            "hv_curve": [0.6],
+            "change_diagnostics": [],
+        }
+        runner._run_setting_sweep({"RI": RI_DMOEA}, progress_prefix="TST", collect_curves=False, collect_diagnostics=False)
+
+        with patch("apps.benchmark_runner._problem_aux_snapshot", side_effect=AssertionError("problem aux should not be recomputed")):
+            runner._run_setting_sweep({"RI": RI_DMOEA}, progress_prefix="TST", collect_curves=False, collect_diagnostics=False)
+
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+    def test_benchmark_runner_only_keeps_curves_for_canonical_setting(self):
+        class TinyCurveConfig:
+            POP_SIZE = 4
+            N_VAR = 2
+            N_OBJ = 2
+            NT = 10
+            TAU_T = 10
+            SETTINGS = [(5, 10), (10, 10)]
+            CANONICAL_SETTING = (10, 10)
+            N_CHANGES = 1
+            GENS_PER_CHANGE = 1
+            N_RUNS = 1
+            PROBLEMS = ["FDA1"]
+            ALGORITHMS = {"RI": RI_DMOEA}
+            KEMM_CONFIG = KEMMConfig(benchmark_aware_prior=False, memory_online_epochs=1)
+
+        runner = ExperimentRunner(TinyCurveConfig())
+        runner._run_single = lambda *args, **kwargs: {
+            "migd": 0.0,
+            "sp": 0.0,
+            "ms": 0.0,
+            "time": 0.0,
+            "igd_curve": [0.1],
+            "hv_curve": [0.2],
+            "change_diagnostics": [],
+        }
+        _, setting_igd_curves, setting_hv_curves, setting_diagnostics = runner._run_setting_sweep(
+            {"RI": RI_DMOEA},
+            progress_prefix="TST",
+            collect_curves=True,
+            collect_diagnostics=True,
+        )
+
+        self.assertEqual(set(setting_igd_curves.keys()), {"10,10"})
+        self.assertEqual(set(setting_hv_curves.keys()), {"10,10"})
+        self.assertEqual(set(setting_diagnostics.keys()), {"10,10"})
 
     def test_experiment_config_declares_four_module_ablation_variants(self):
         self.assertEqual(

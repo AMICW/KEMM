@@ -6,3 +6,6 @@ __pycache__/
 !docs/images/*.jpg
 ship_simulation/outputs/
 benchmark_outputs/
+.private/
+docs/patent_*.md
+docs/patent_figures/README.md

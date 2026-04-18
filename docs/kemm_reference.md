@@ -161,17 +161,18 @@ kemm/
 最常见的 benchmark 入口是：
 
 ```bash
-python run_experiments.py --quick
 python -m apps.benchmark_runner --quick
 ```
 
+兼容 wrapper `python run_experiments.py --quick` 仍然可用，但不再是首选入口。
+
 调用链大致是：
 
-1. `run_experiments.py`
-2. `apps.benchmark_runner.main()`
-3. `run_benchmark()`
-4. `ExperimentRunner.run_all()`
-5. `_run_single()` 中创建算法实例
+1. `apps.benchmark_runner.main()`
+2. `run_benchmark()`
+3. `ExperimentRunner.run_all()`
+4. benchmark task cache 先检查 `(setting, algorithm, problem, run, ablation_variant)`
+5. `_run_single()` 或对应串/并行任务逻辑中创建算法实例
 6. 算法对象在每次环境变化时调用 `respond_to_change()`
 7. 实验结束后交给 `ResultPresenter` 与 `export_benchmark_report()`
 
@@ -204,6 +205,7 @@ benchmark_outputs/
 - 每个问题重复多少次
 - 每次环境变化跑多少代
 - 是否启用 `JY` 问题
+- 是否强制跳过缓存
 - 输出目录放在哪里
 
 它的作用类似于实验计划表。
@@ -218,6 +220,12 @@ benchmark_outputs/
 
 在每个 `(算法, 问题, 运行编号)` 内部，又会继续遍历每次环境变化。
 
+完整模式下，`ExperimentRunner` 还负责：
+
+- 按 `(setting, algorithm, problem, run, ablation_variant)` 读写 benchmark task cache
+- 预计算并复用真实 POF 快照和时间变量
+- 只对 canonical setting 保留完整 `IGD/HV` 曲线与 `KEMMChangeDiagnostics` 聚合
+
 ### 5.3 `ResultPresenter`
 
 负责三类事情：
@@ -227,6 +235,15 @@ benchmark_outputs/
 3. 导出结构化报告
 
 因此 `apps/benchmark_runner.py` 在工程角色上更像实验编排器。
+
+从 CLI 角度看，这个入口现在还额外承接：
+
+- `--skip-ablation`
+- `--summary-only`
+- `--force-rerun`
+- `--algorithms`
+- `--problems`
+- `--workers`
 
 这里有一个现在很重要的边界：
 
@@ -791,6 +808,14 @@ ship 主线并没有重新发明一套算法，而是通过 `ship_simulation/opt
 
 - `kemm/` 负责通用算法核心
 - `ship_simulation/` 负责真实应用问题壳层
+
+此外，最新 ship 报告层已经把“算法主线”和“实验可比性/统计性”拆开：
+
+- `--strict-comparable` 在报告阶段自动追加 `random_matched / nsga_style_matched`，用于预算对齐比较
+- 统计显著性结果固定导出 `raw/statistical_tests.*` 与 `reports/statistical_significance.md`
+- 扰动鲁棒性扫描通过 `--robustness-sweep` 独立输出 `raw/robustness_*` 与 `reports/robustness_sweep.md`
+
+这三部分都属于“实验呈现与验证层增强”，不改变 KEMM 的核心四机制结构定义。
 
 这里要特别强调一个边界：
 

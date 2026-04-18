@@ -204,29 +204,40 @@ benchmark 侧常改字段包括：
 
 ## 7. Ship 核心图包
 
-当前 ship 默认导出的主图：
+当前 ship 完整报告的默认图包是：
+
+- 每个场景 `19` 张
+- 全局图 `2` 张
+- 总计 `4 * 19 + 2 = 78` 张
+
+全局图：
+
+- `scenario_gallery.png`
+- `route_bundle_gallery.png`
+
+每场景图：
 
 1. `*_environment_overlay.png`
 2. `*_route_planning_panel.png`
-3. `*_snapshots.png`
-4. `*_spatiotemporal.png`
-5. `*_control_timeseries.png`
-6. `*_pareto3d.png`
-7. `*_pareto_projection.png`
-8. `*_risk_breakdown.png`
-9. `*_safety_envelope.png`
-10. `*_parallel.png`
-11. `*_radar.png`
-12. `*_convergence.png`
-13. `*_distribution.png`
-14. `*_run_statistics.png`
-15. `*_dashboard.png`
+3. `*_change_timeline.png`
+4. `*_snapshots.png`
+5. `*_spatiotemporal.png`
+6. `*_control_timeseries.png`
+7. `*_pareto3d.png`
+8. `*_pareto_projection.png`
+9. `*_risk_breakdown.png`
+10. `*_safety_envelope.png`
+11. `*_parallel.png`
+12. `*_radar.png`
+13. `*_convergence.png`
+14. `*_distribution.png`
+15. `*_run_statistics.png`
+16. `*_dashboard.png`
+17. `*_runtime_tradeoff.png`
+18. `*_decision_projection.png`
+19. `*_operator_allocation.png`
 
-这些图都由：
-
-- `ship_simulation/visualization/report_plots.py`
-
-统一生成。
+这些图都由 `ship_simulation/visualization/report_plots.py` 统一生成。
 
 附录图：
 
@@ -237,7 +248,27 @@ benchmark 侧常改字段包括：
 
 ---
 
-## 8. Benchmark 核心图包
+## 8. 新增报告产物
+
+最新 ship 报告结构里，除了图之外还会额外导出：
+
+- 严格可比组（`--strict-comparable`）会追加 `*_matched` 算法分组
+- 统计显著性结果：
+  - `raw/statistical_tests.json`
+  - `raw/statistical_tests.csv`
+  - `reports/statistical_significance.md`
+- 鲁棒性扫描（`--robustness-sweep`）结果：
+  - `raw/robustness_runs.csv`
+  - `raw/robustness_curve.csv`
+  - `raw/robustness_summary.json`
+  - `reports/robustness_sweep.md`
+  - `figures/robustness_success_curve.png`（启用渲染时）
+
+这部分不是“新加一批默认主图”，而是报告层额外产物。论文写作时建议把它们作为统计支撑与鲁棒性支撑，不和主图叙事混在同一段里。
+
+---
+
+## 9. Benchmark 核心图包
 
 benchmark 侧当前默认保留：
 
@@ -259,9 +290,9 @@ benchmark 侧当前默认保留：
 
 ---
 
-## 9. 常见修改场景
+## 10. 常见修改场景
 
-### 9.1 只想统一投稿风格
+### 10.1 只想统一投稿风格
 
 改：
 
@@ -290,7 +321,7 @@ python -m apps.benchmark_runner --quick --plot-preset ieee
 - `nature`：更强调视觉展示
 - `thesis`：更适合长文档，不强依赖 SciencePlots 版式
 
-### 9.2 想增加 ship 新图
+### 10.2 想增加 ship 新图
 
 改：
 
@@ -298,7 +329,7 @@ python -m apps.benchmark_runner --quick --plot-preset ieee
 - `ship_simulation/visualization/__init__.py`
 - 如需尺寸/颜色参数，再补 `ShipPlotConfig`
 
-### 9.3 想清理 benchmark 重复图
+### 10.3 想清理 benchmark 重复图
 
 改：
 
@@ -308,9 +339,9 @@ python -m apps.benchmark_runner --quick --plot-preset ieee
 
 ---
 
-## 9. 推荐调用方式
+## 11. 推荐调用方式
 
-### 9.1 Python 调用
+### 11.1 Python 调用
 
 ```python
 from reporting_config import build_ship_plot_config
@@ -325,17 +356,19 @@ generate_report_with_config(
 )
 ```
 
-### 9.2 CLI 调用
+### 11.2 CLI 调用
 
 ```powershell
 python ship_simulation/run_report.py --plot-preset paper --scenarios crossing overtaking
 python ship_simulation/run_report.py --plot-preset ieee --science-style science,ieee,no-latex
+python ship_simulation/run_report.py --workers 4 --strict-comparable
+python ship_simulation/run_report.py --workers 4 --robustness-sweep --robustness-levels 0,0.25,0.5,0.75,1.0 --robustness-scenarios crossing overtaking harbor_clutter
 python -m apps.benchmark_runner --quick --plot-preset paper --appendix-plots
 ```
 
 ---
 
-## 10. 维护原则
+## 12. 维护原则
 
 - 图表层只消费结构化输入，不直接读算法私有字段
 - 新的风格参数先放 `reporting_config.py`

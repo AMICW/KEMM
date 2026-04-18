@@ -496,6 +496,50 @@
 - 推荐正文写法：该图可与 violin 和 convergence 联用，说明提出方法不仅单次轨迹更好，而且跨运行更稳。
 - 建议：主图或强附录图
 
+### 6.6 `*_runtime_tradeoff.png`
+
+- 状态：已实现
+- 输出文件：`ship_simulation/outputs/.../figures/<scenario>_runtime_tradeoff.png`
+- 生成入口：`save_runtime_tradeoff()`
+- 视觉元素：横轴为求解耗时，纵轴为控制相关代价（含速度平滑与控制努力聚合），点色区分算法并带重复运行统计范围
+- 论文用途：解释“更安全/更稳”是否依赖明显更高实时开销
+- 推荐正文写法：该图适合在工程可部署性段落使用，用于说明方法性能收益与实时成本之间的折中关系。
+- 审稿风险：若不说明 runtime 的统计口径（单 step、单 episode 或总时长），容易被误解
+- 建议：主图或强附录图
+
+### 6.7 `*_decision_projection.png`
+
+- 状态：已实现
+- 输出文件：`ship_simulation/outputs/.../figures/<scenario>_decision_projection.png`
+- 生成入口：`save_decision_space_projection()`
+- 视觉元素：候选轨迹决策变量的 PCA/低维投影散点，标注代表解与主要簇中心
+- 论文用途：展示不同算法在“决策空间”而非“目标空间”上的搜索覆盖差异
+- 推荐正文写法：决策空间投影可补充说明算法是如何在可行航迹簇之间分布搜索，而不仅仅是最终目标值差异。
+- 审稿风险：需说明投影降维方法和解释方差，避免过度解读二维图形距离
+- 建议：主图或补充主图
+
+### 6.8 `*_operator_allocation.png`
+
+- 状态：已实现
+- 输出文件：`ship_simulation/outputs/.../figures/<scenario>_operator_allocation.png`
+- 生成入口：`save_operator_allocation_history()`
+- 视觉元素：`memory / prediction / transfer / reinit` 的分配比例堆叠面积或堆叠柱，并叠加变化事件标记
+- 论文用途：展示 ship 场景下 Contextual MAB 的机制分配如何随环境变化动态调整
+- 推荐正文写法：该图应与 `*_change_timeline.png` 联读，用于说明性能变化对应的是策略分配重心变化，而非偶然搜索波动。
+- 审稿风险：如果没有给出变化触发点或分配依据，会被认为缺少可解释性闭环
+- 建议：主图
+
+### 6.9 `robustness_success_curve.png`
+
+- 状态：按需导出
+- 输出文件：`ship_simulation/outputs/.../figures/robustness_success_curve.png`
+- 生成入口：`_save_robustness_curve()`（由 `--robustness-sweep` 触发）
+- 视觉元素：横轴为扰动强度 level，纵轴为成功率，曲线区分算法
+- 论文用途：展示算法在分级扰动下的成功率退化曲线
+- 推荐正文写法：建议与 `reports/robustness_sweep.md` 和 `raw/robustness_curve.csv` 联用，说明鲁棒性结论来自连续强度扫描而非单点对比。
+- 审稿风险：需说明扰动 level 的物理含义和场景集合，否则“鲁棒性”表述会偏抽象
+- 建议：主图或统计补充图
+
 ---
 
 ## 7. 维护约定

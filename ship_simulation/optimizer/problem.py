@@ -8,7 +8,13 @@ from typing import Dict, List, Sequence, Tuple
 import numpy as np
 
 from ship_simulation.config import ProblemConfig
-from ship_simulation.core.collision_risk import RiskBreakdown, ShipDomainRiskModel
+from ship_simulation.core.collision_risk import (
+    CircularObstacleDescriptor,
+    PolygonObstacleDescriptor,
+    RiskBreakdown,
+    ShipDomainRiskModel,
+    StaticObstacleDescriptor,
+)
 from ship_simulation.core.environment import EnvironmentField
 from ship_simulation.core.fuel_model import FuelConsumptionModel
 from ship_simulation.core.ship_model import NomotoShip, Trajectory
@@ -98,6 +104,8 @@ class ShipTrajectoryProblem:
             self.target_ship_model.simulate_constant_velocity(target.initial_state)
             for target in self.scenario.target_ships
         ]
+        self._target_names = [target.name for target in self.scenario.target_ships]
+        self._static_obstacle_descriptors = self._build_static_obstacle_descriptors()
 
         self.n_waypoints = config.num_intermediate_waypoints
         self.n_var = self.n_waypoints * 3
@@ -105,6 +113,36 @@ class ShipTrajectoryProblem:
         self.var_bounds = self._build_bounds()
         self._objective_cache: dict[bytes, np.ndarray] = {}
         self._evaluation_cache: dict[bytes, EvaluationResult] = {}
+
+    def _build_static_obstacle_descriptors(self) -> list[StaticObstacleDescriptor]:
+        descriptors: list[StaticObstacleDescriptor] = []
+        for obstacle in self.scenario.static_obstacles:
+            if hasattr(obstacle, "radius"):
+                descriptors.append(
+                    CircularObstacleDescriptor(
+                        center=np.asarray(obstacle.center, dtype=float),
+                        radius=float(obstacle.radius),
+                    )
+                )
+                continue
+            vertices = np.asarray(obstacle.vertices, dtype=float)
+            descriptors.append(
+                PolygonObstacleDescriptor(
+                    vertices=vertices,
+                    edge_starts=vertices,
+                    edge_ends=np.roll(vertices, -1, axis=0),
+                    bounding_box=np.array(
+                        [
+                            float(np.min(vertices[:, 0])),
+                            float(np.max(vertices[:, 0])),
+                            float(np.min(vertices[:, 1])),
+                            float(np.max(vertices[:, 1])),
+                        ],
+                        dtype=float,
+                    ),
+                )
+            )
+        return descriptors
 
     def _cached_evaluation(self, cache_key: bytes, *, copy_result: bool) -> EvaluationResult | None:
         cached = self._evaluation_cache.get(cache_key)
@@ -373,9 +411,10 @@ class ShipTrajectoryProblem:
             own_trajectory,
             target_trajectories,
             static_obstacles=self.scenario.static_obstacles,
+            static_obstacle_descriptors=self._static_obstacle_descriptors,
             environment=self.environment,
             colreg_roles=self.scenario.metadata.colreg_roles,
-            target_names=[target.name for target in self.scenario.target_ships],
+            target_names=self._target_names,
         )
         terminal_distance = float(own_trajectory.terminal_distance)
         fuel = float(self.fuel_model.integrate(own_trajectory))

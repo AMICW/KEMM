@@ -133,105 +133,79 @@ pip install -r requirements-dev.txt
 
 - [docs/how_to_run.md](docs/how_to_run.md)
 
-如果你不想记复杂命令，只记下面这 4 条就够了：
+如果你只记主运行入口，只记下面这两条：
 
 ```powershell
-python -m apps.ship_runner
-python ship_simulation/run_report.py --quick --scenarios crossing --interactive-figures --interactive-html
-python -c "from ship_simulation.main_demo import run_demo; run_demo('crossing', optimizer_name='kemm', show_animation=False)"
-python run_experiments.py --quick
+python -m apps.benchmark_runner --full --workers 4
+python ship_simulation/run_report.py --workers 4
 ```
 
-它们分别表示：
+- `python -m apps.benchmark_runner --full --workers 4`：跑完整 benchmark，保持当前标准协议不缩水，包括 6 个问题、5 次重复、消融和全部图表。
+- `python ship_simulation/run_report.py --workers 4`：跑完整 ship 报告，保持 4 个场景 × 3 个算法 × 3 次重复，并完整生成 78 张图。
+- 其它 quick、interactive、plot preset 和临时 profile 组合不再在 README 展开，统一看 [docs/how_to_run.md](docs/how_to_run.md) 和 [docs/run_commands.md](docs/run_commands.md)。
 
-- `python -m apps.ship_runner`：走 ship 的兼容应用入口，执行一次默认演示
-- `python ship_simulation/run_report.py --quick --scenarios crossing --interactive-figures --interactive-html`：生成 ship 快速交互报告，除了 PNG 还会导出 ship 侧 3D 图的 `*.fig.pickle` 和 `.html`
-- `python -c "from ship_simulation.main_demo import run_demo; run_demo('crossing', optimizer_name='kemm', show_animation=False)"`：跑一次 ship 单次演示，不生成整套报告
-- `python run_experiments.py --quick`：跑 benchmark 快速验证
+### 6.1 为什么完整实验仍然慢
 
-如果只想先看结果，优先跑 `python ship_simulation/run_report.py --quick --scenarios crossing`。
+完整实验依然慢，是因为协议没有缩水，而不是因为入口变复杂了。
 
-### 6.1 benchmark 快速验证
+benchmark 这条线仍然要覆盖完整问题集、重复运行、消融和全图表。本轮主要做了实现层提速：
 
-```powershell
-python run_experiments.py --quick --plot-preset paper
-python -m apps.benchmark_runner --quick --plot-preset ieee
-```
+- 新增任务级缓存，粒度固定为 `(setting, algorithm, problem, run, ablation_variant)`；同配置重跑时默认直接复用结果。
+- 真实 POF 序列和时间变量按 `(setting, problem, change_index)` 预计算复用，减少重复 `pof_func()` 调用。
+- 只有 canonical setting 继续保留完整 `curve + change_diagnostics` 聚合；非 canonical setting 只保留最终标量指标，报告口径不变。
+- 如需强制跳过缓存，可在 benchmark 入口上追加 `--force-rerun`。
 
-说明：
+ship 这条线仍然慢，是因为完整模式依然要先算完 36 个 episode，再渲染 78 张图。本轮主要加速了三层：
 
-- 运行 `python run_experiments.py --quick --plot-preset paper` 会用旧兼容入口执行一轮 benchmark 快速验证，并以 `paper` 预设导出论文风格图表。
-- 运行 `python -m apps.benchmark_runner --quick --plot-preset ieee` 会直接使用真实 benchmark 入口，并按 `ieee` 风格生成结果，更适合当前主线回归与出图。
-- benchmark 报告默认会额外跑三组动态设置 `(n_t, τ_t) = (5,10), (10,10), (10,20)`，导出论文风格的 `benchmark_migd_table.png`，并附带关闭 benchmark prior 的 KEMM 四模块消融图 `benchmark_ablation.png`。
-- benchmark 主报告里的关键原始文件是 `raw/paper_table_metrics.csv` 与 `raw/ablation_delta_metrics.csv`，前者对应论文主表，后者对应相对 `KEMM-Full` 的消融退化百分比。
+- 环境场、domain risk、DCPA/TCPA 和障碍净空改成整条轨迹批量计算，减少逐时刻 Python 分派。
+- 完整报告内部改成“episode 计算/缓存 -> 图表并行渲染 -> summary/metadata”三阶段，外部命令仍保持一步到位。
+- 同配置再次运行时，默认复用 `raw/episode_cache/` 下的 episode 结果，只重新生成图表与汇总。
 
-### 6.2 benchmark 完整实验
+### 6.2 Ship 默认 profile
 
-```powershell
-python run_experiments.py --full --plot-preset paper
-python -m apps.benchmark_runner --full --plot-preset paper
-```
+完整 ship 报告现在默认使用 `full_tuned` 场景 profile。它会按 `head_on / crossing / overtaking / harbor_clutter` 分别分配求解预算、滚动时域、净空阈值和风险权重，目标是在不改 KEMM 核心机制的前提下，让完整实验更快、ship 结果更稳。
 
-说明：
+旧的统一预算仍保留为 `legacy_uniform`，用于回归比较。完整报告的 summary 和 metadata 会明确写出当前 active profile，以及 `episode_compute_seconds`、`figure_render_seconds`、`episode_cache_hits`、`episode_cache_misses`。
 
-- 运行 `python run_experiments.py --full --plot-preset paper` 会执行完整 benchmark 实验，并按 `paper` 预设输出完整报告与图表。
-- 运行 `python -m apps.benchmark_runner --full --plot-preset paper` 会直接使用 benchmark 真实入口。
+### 6.3 验证入口
 
-### 6.3 benchmark 中等规模实验
+基础测试和 smoke 命令保留在 [AGENTS.md](AGENTS.md) 与 [docs/how_to_run.md](docs/how_to_run.md)，README 不再展开更多运行分支。
 
-当前命令行没有内置 `--medium` 选项。
+### 6.4 快速验证算法逻辑
 
-如果你想跑一组介于 `quick` 和 `full` 之间的 benchmark，直接看：
-
-- [docs/how_to_run.md](docs/how_to_run.md)
-- [docs/run_commands.md](docs/run_commands.md)
-
-里面已经给出了一段不修改源码文件的 PowerShell 临时脚本，默认采用：
-
-- `N_RUNS = 3`
-- `N_CHANGES = 7`
-- `GENS_PER_CHANGE = 15`
-
-### 6.4 ship 单次演示
+如果你现在不是要跑完整实验，只是想确认“当前算法逻辑能不能走通”，优先用下面三条：
 
 ```powershell
-python -m apps.ship_runner
-python -c "from ship_simulation.main_demo import run_demo; run_demo('crossing', optimizer_name='kemm', show_animation=False)"
-```
-
-说明：
-
-- 运行 `python -m apps.ship_runner` 会走 ship 的兼容命令入口，执行一次默认演示。
-- 运行 `python -c "from ship_simulation.main_demo import run_demo; run_demo('crossing', optimizer_name='kemm', show_animation=False)"` 会直接调用 ship 主线代码，在 `crossing` 场景下用 `KEMM` 跑一次不弹动画窗口的演示。
-
-### 6.5 ship 批量报告与完整物理测试
-
-```powershell
-python ship_simulation/run_report.py --quick --scenarios crossing --n-runs 1 --plot-preset paper
-python ship_simulation/run_report.py
-python ship_simulation/run_report.py --scenarios harbor_clutter --experiment-profile shock --n-runs 3 --plot-preset paper
-python ship_simulation/run_report.py --plot-preset ieee --science-style science,ieee,no-latex
-python ship_simulation/run_report.py --quick --scenarios crossing --interactive-figures --interactive-html
-```
-
-说明：
-
-- 运行 `python ship_simulation/run_report.py --quick --scenarios crossing --n-runs 1 --plot-preset paper` 会快速生成一个 `crossing` 场景、每算法 1 次运行的 ship 报告，适合 smoke test 和看默认论文图包。
-- 运行 `python ship_simulation/run_report.py` 才是 ship 主线的完整物理测试报告入口。默认会跑 `head_on / crossing / overtaking / harbor_clutter` 四个场景，以及 `kemm / nsga_style / random` 三种算法。
-- 运行 `python ship_simulation/run_report.py --scenarios harbor_clutter --experiment-profile shock --n-runs 3 --plot-preset paper` 会启用突变型动态实验 profile，更适合验证 KEMM 在 closure shock 下的响应能力。
-- 运行 `python ship_simulation/run_report.py --plot-preset ieee --science-style science,ieee,no-latex` 会按 `ieee` 预设并显式指定 `SciencePlots` 样式 tuple 生成 ship 报告，适合投稿前试版式。
-- 运行 `python ship_simulation/run_report.py --quick --scenarios crossing --interactive-figures --interactive-html` 会在 PNG 之外为 ship 的 3D 图额外导出可交互的 `*.fig.pickle`，并为 `pareto3d / spatiotemporal` 额外导出 `.html`，便于自己旋转视角后再保存。
-- ship 的 Plotly 3D HTML 现在会附带更完整的 hover 信息，例如 Pareto 点的加权分数、平均速度和首个 waypoint 摘要，以及时空轨迹上的速度、航向、风险和净空。
-
-### 6.6 基础测试
-
-```powershell
+python -m apps.benchmark_runner --quick --force-rerun --algorithms KEMM --problems FDA1
+python ship_simulation/run_report.py --quick --scenarios crossing --n-runs 1 --algorithms kemm --summary-only
 python -m unittest discover -s tests -v
 ```
 
-说明：
+如果你想顺带验证 ship 最新报告结构（严格可比 + 统计 + 鲁棒性）链路，再补一条：
 
-- 运行 `python -m unittest discover -s tests -v` 会执行当前仓库的完整单元测试与 smoke 测试。
+```powershell
+python ship_simulation/run_report.py --quick --summary-only --scenarios crossing --n-runs 1 --algorithms kemm random --strict-comparable --robustness-sweep --robustness-levels 0,0.5 --robustness-scenarios crossing
+```
+
+它们分别适合：
+
+- `python -m apps.benchmark_runner --quick --force-rerun --algorithms KEMM --problems FDA1`
+  - 最小 benchmark 冒烟验证
+  - 走真实入口
+  - 强制跳过缓存
+  - 只跑 `KEMM + FDA1`
+- `python ship_simulation/run_report.py --quick --scenarios crossing --n-runs 1 --algorithms kemm --summary-only`
+  - 最小 ship 冒烟验证
+  - 只跑一个场景、一种算法、一次重复
+  - 跳过图表渲染，更快暴露 solver / episode / selection 链路问题
+- `python -m unittest discover -s tests -v`
+  - 基础单元测试和回归测试
+
+实用判断规则：
+
+- 改了 `kemm/`、benchmark 响应逻辑或 benchmark 指标：先跑第一条
+- 改了 `ship_simulation/optimizer/*`、风险模型、场景生成或 episode：先跑第二条
+- 准备提交前：再补跑第三条
 
 ---
 
@@ -324,39 +298,18 @@ ship 主线已经不是单次静态规划 demo，而是：
 - Violin Plot
 - repeated-run 安全统计图
 - Summary dashboard
+- 求解时间与控制能耗折中图
+- 决策空间 PCA 投影视图
+- Contextual MAB 算子动态分配图
 
 如果你想让输出图不只是固定 PNG，而是可以后续继续交互：
 
-```powershell
-python ship_simulation/run_report.py --quick --scenarios crossing --interactive-figures --interactive-html
-python -m apps.benchmark_runner --quick --interactive-figures
-python -m ship_simulation.visualization.figure_viewer ship_simulation/outputs/report_YYYYMMDD_HHMMSS/figures/crossing_pareto3d.fig.pickle
-python -m ship_simulation.visualization.figure_viewer ship_simulation/outputs/report_YYYYMMDD_HHMMSS/figures/crossing_pareto3d.fig.pickle --elev 25 --azim 140 --save-path ship_simulation/outputs/report_YYYYMMDD_HHMMSS/figures/crossing_pareto3d_view.png --no-show
-```
-
-这些命令分别表示：
-
-- `--interactive-figures`：ship 侧只为 `pareto3d / spatiotemporal` 额外导出可重新打开的 `*.fig.pickle`；benchmark 侧仍按原逻辑导出
-- `--interactive-html`：为当前支持的 3D ship 图额外导出浏览器可旋转的 `.html`
-- `figure_viewer`：重新打开保存过的 figure bundle；对 3D 图可指定 `--elev` 和 `--azim` 后重新另存一个新视角
-
-详细说明见：
+交互式 figure bundle、HTML 导出和 `figure_viewer` 的使用方式不再在 README 展开命令组合，统一见：
 
 - [docs/visualization_guide.md](docs/visualization_guide.md)
 - [docs/figure_catalog.md](docs/figure_catalog.md)
 
-如果你想快速切换不同论文风格，最常用的命令就是：
-
-```powershell
-python ship_simulation/run_report.py --plot-preset paper
-python ship_simulation/run_report.py --plot-preset ieee
-python ship_simulation/run_report.py --plot-preset nature
-python ship_simulation/run_report.py --plot-preset thesis
-python -m apps.benchmark_runner --quick --plot-preset paper
-python -m apps.benchmark_runner --quick --plot-preset ieee
-```
-
-这些命令的含义是：
+如果你想快速切换不同论文风格，优先看 [docs/how_to_run.md](docs/how_to_run.md)。当前仓库常用的 preset 仍然是：
 
 - `paper`：默认论文风格，适合日常出图与仓库展示
 - `ieee`：更紧凑，适合 IEEE 类版式
@@ -413,7 +366,17 @@ config.scenario_generation.crossing.current_direction_jitter_deg = 8.0
 
 这样生成的场景仍然保持 `crossing` 的语义，但会输出同 family 的可复现实验变体；对应 seed 和 family 会写进 `scenario_catalog.json`。
 
-如果你想直接启用面向 KEMM 机制验证的动态实验 profile，优先改：
+ship 现在有两套互相独立、但经常同时出现的 profile 体系：
+
+1. `ProblemConfig.experiment`
+   - 控制滚动重规划过程里的计划变化事件
+   - 例如环境漂移、交通意图偏移和临时 closure 注入
+2. `DemoConfig.scenario_profiles`
+   - 控制不同场景的求解预算、局部时域、净空阈值和风险权重
+   - 完整报告默认用 `full_tuned`
+   - quick 模式默认退回 `legacy_uniform`
+
+如果你想直接启用面向 KEMM 机制验证的动态 experiment profile，优先改：
 
 - `ship_simulation/config.py` 里的 `ProblemConfig.experiment`
 
@@ -434,6 +397,38 @@ apply_experiment_profile(config, "shock")
 - `recurring_harbor`
 
 这些 profile 会直接影响滚动重规划过程中的环境漂移、目标船意图变化和通道 closure 扰动；对应的解释图是每个场景新增的 `*_change_timeline.png`。
+
+如果开启 `--robustness-sweep`，还会额外导出 `figures/robustness_success_curve.png` 与配套 `raw/robustness_*.csv/json`，用于展示扰动强度扫描下的成功率曲线。
+
+如果你想切换场景预算 profile，优先改：
+
+- `ship_simulation/config.py` 里的 `DemoConfig.scenario_profiles.active_profile_name`
+
+例如：
+
+```python
+from ship_simulation.config import build_default_demo_config
+
+demo = build_default_demo_config()
+demo.scenario_profiles.active_profile_name = "legacy_uniform"
+```
+
+当前 `full_tuned` 会按 `head_on / crossing / overtaking / harbor_clutter` 分别调整：
+
+- `random_search_samples`
+- `evolutionary_baseline_pop_size / generations`
+- `kemm_pop_size / generations`
+- `kemm_initial_guess_copies`
+- `kemm_heuristic_detour_limit`
+- `kemm_reuse_solver_state`
+- `local_horizon / execution_horizon / max_replans`
+- `objective_weights`
+- `safety_clearance`
+- `soft/hard clearance penalties`
+- `time/risk safety penalty weights`
+- `domain_risk_weight`
+
+完整 ship 报告的 summary 和 metadata 会明确写出当前 active solve profile，以及 `episode_compute_seconds`、`figure_render_seconds`、`episode_cache_hits`、`episode_cache_misses`。
 
 如果你想直接调 ship 侧 KEMM 的真实机制开关和预算，优先改：
 
@@ -472,15 +467,33 @@ demo = build_default_demo_config()
 demo.report_algorithms = ("kemm", "random")
 ```
 
+完整报告的内部执行顺序现在是：
+
+1. 先求解全部 episode
+2. 把 episode 结果写入 `raw/episode_cache/`
+3. 再并行渲染图表
+4. 最后写 `summary / metadata / inventory`
+
 报告原始目录还会额外导出：
 
 - `raw/figure_manifest.json`
 - `raw/representative_runs.json`
+- `raw/report_metadata.json`
+- `raw/planning_steps.json`
+- `raw/scenario_catalog.json`
+- `raw/statistical_tests.json`
+- `raw/statistical_tests.csv`
+- `raw/robustness_summary.json`（启用扰动扫描时）
 
 其中：
 
 - `figure_manifest.json` 说明默认理论导出了哪些图
 - `representative_runs.json` 记录每个场景、每个算法被选中的代表性 run
+- `report_metadata.json` 记录当前 experiment profile、solve profile、缓存命中和分阶段耗时
+- `planning_steps.json` 记录逐 step 的局部解、变更注入和 runtime
+- `scenario_catalog.json` 记录 family、seed、difficulty 和场景对象计数
+- `statistical_tests.*` 记录 `KEMM` 与 baseline 在各场景指标上的 95% CI 与显著性检验结果
+- `robustness_summary.json` 记录扰动强度扫描下的成功率曲线
 
 当前 summary 表和 CSV 统计的是全部 repeated runs，而路线、时空轨迹、风险分解这类图仍然使用 representative run。后面写论文时，优先把这层区别说清楚。
 

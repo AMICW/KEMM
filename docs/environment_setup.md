@@ -25,11 +25,16 @@
 
 ## 2. 核心依赖
 
-本仓库当前核心第三方依赖很少，主要是：
+本仓库当前核心第三方依赖较少，主要是：
 
 - `numpy`
 - `scipy`
 - `matplotlib`
+
+可选依赖：
+
+- `SciencePlots`
+- `plotly`
 
 对应安装文件：
 
@@ -68,26 +73,49 @@ conda activate kemm
 pip install -r requirements.txt
 ```
 
-## 4. 验证安装
+如果你需要测试依赖：
 
-安装完成后，建议至少执行以下命令：
-
-```bash
-python -m unittest discover -s tests -v
-python run_experiments.py --quick
-python ship_simulation/run_report.py
+```powershell
+pip install -r requirements-dev.txt
 ```
 
-如果你需要更完整的运行命令总表，包括：
+## 4. 安装后最小验证
 
-- benchmark 快速 / 中等 / 完整实验
-- ship 单次 demo / 快速报告 / 完整物理测试
-- 输出目录与常用可选参数
+安装完成后，建议至少执行下面三步：
 
-请直接看：
+```powershell
+python -m unittest discover -s tests -v
+python -m apps.benchmark_runner --quick
+python ship_simulation/run_report.py --quick --scenarios crossing harbor_clutter --n-runs 1
+```
 
-- `docs/how_to_run.md`
-- `docs/run_commands.md`
+这样可以分别验证：
+
+- 基础单元测试是否能跑通
+- benchmark 真实入口是否正常
+- ship 批量报告真实入口是否正常
+
+如果你要额外验证“最新 ship 报告结构”是否可用（严格可比 + 统计 + 鲁棒性扫描），再补一条：
+
+```powershell
+python ship_simulation/run_report.py --quick --summary-only --scenarios crossing --n-runs 1 --algorithms kemm random --strict-comparable --robustness-sweep --robustness-levels 0,0.5 --robustness-scenarios crossing
+```
+
+这条命令主要检查新增输出链路是否都能生成：
+
+- `raw/statistical_tests.json/csv`
+- `reports/statistical_significance.md`
+- `raw/robustness_runs.csv`
+- `raw/robustness_curve.csv`
+- `raw/robustness_summary.json`
+- `reports/robustness_sweep.md`
+
+如果你想验证缓存链路：
+
+```powershell
+python -m apps.benchmark_runner --quick --force-rerun
+python -m apps.benchmark_runner --quick
+```
 
 ## 5. Windows 说明
 
@@ -113,7 +141,7 @@ CMD:
 set LOKY_MAX_CPU_COUNT=1
 ```
 
-## 6. 仓库输出目录
+## 6. 输出目录
 
 benchmark 输出默认写到：
 
@@ -127,6 +155,11 @@ ship 输出默认写到：
 ship_simulation/outputs/
 ```
 
+补充说明：
+
+- benchmark 任务缓存默认写到 `benchmark_outputs/_cache/benchmark_tasks/`
+- ship 完整报告的 episode 缓存写到对应报告目录下的 `raw/episode_cache/`
+
 这些目录通常不应作为源码的一部分手工编辑。
 
 ## 7. 面向 GitHub 使用者的最小步骤
@@ -139,7 +172,13 @@ cd KEMM(renew)
 python -m venv .venv
 pip install -r requirements.txt
 python -m unittest discover -s tests -v
-python run_experiments.py --quick
+python -m apps.benchmark_runner --quick
+```
+
+如果你还要顺手确认 ship 主线：
+
+```bash
+python ship_simulation/run_report.py --quick --scenarios crossing --n-runs 1
 ```
 
 ## 8. 进一步阅读

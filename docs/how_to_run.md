@@ -1,11 +1,6 @@
-# How To Run
+﻿# How To Run
 
-This file is the English command cheat sheet for the repository.
-
-Use this file when:
-
-- you want a compact English reference for benchmark and ship commands
-- you already know the project structure and only need runnable entry points
+This file is the English command cheat sheet for the repository. It is meant for people who already have the environment set up and mainly need the current runnable entry points and the most useful options.
 
 If you need installation help first, go to [environment_setup.md](environment_setup.md).
 If you prefer the Chinese quick-reference version, go to [run_commands.md](run_commands.md).
@@ -17,11 +12,16 @@ Benchmark real entry point:
 
 - `python -m apps.benchmark_runner`
 
-Ship physical batch-report real entry point:
+Ship batch-report real entry point:
 
 - `python ship_simulation/run_report.py`
 
-These two commands are the primary entry points of the current codebase.
+Compatibility wrappers still exist, but they are no longer the preferred entry points:
+
+- `python run_experiments.py`
+- `python -m apps.ship_runner`
+
+---
 
 ## 2. Benchmark
 
@@ -37,11 +37,14 @@ Current `--quick` meaning:
 - changes: `5`
 - generations per change: `10`
 - problems: `FDA1`, `FDA3`, `dMOP2`
+- default workers: `1`
 
 ### 2.2 Full benchmark
 
+README keeps only this full-run entry point:
+
 ```powershell
-python -m apps.benchmark_runner --full --plot-preset paper
+python -m apps.benchmark_runner --full --workers 4
 ```
 
 Current `--full` meaning:
@@ -51,72 +54,62 @@ Current `--full` meaning:
 - generations per change: `20`
 - problems: `FDA1`, `FDA2`, `FDA3`, `dMOP1`, `dMOP2`, `dMOP3`
 - settings sweep: `(5,10)`, `(10,10)`, `(10,20)`
+- ablation and main figures enabled by default
+- benchmark task cache enabled by default
 
 ### 2.3 Full benchmark with JY problems
 
 ```powershell
-python -m apps.benchmark_runner --with-jy --plot-preset paper
+python -m apps.benchmark_runner --with-jy --workers 4
 ```
 
 This appends `JY1` and `JY4` to the standard problem suite.
 
-### 2.4 Medium benchmark
+### 2.4 Benchmark cache and warm reruns
 
-There is no built-in `--medium` CLI switch.
+The benchmark runner now uses task-level caching for complete runs. The cache granularity is:
 
-Use the public API with a one-off PowerShell script:
+- `(setting, algorithm, problem, run, ablation_variant)`
+
+Cache directory:
+
+- `benchmark_outputs/_cache/benchmark_tasks/`
+
+If you rerun the same configuration, cached tasks are reused automatically.
+
+Force a full recomputation:
 
 ```powershell
-@'
-from pathlib import Path
-from apps.benchmark_runner import ExperimentConfig, ExperimentRunner, ResultPresenter
-from kemm.reporting import build_report_paths, export_benchmark_report
-from reporting_config import build_benchmark_plot_config
-
-cfg = ExperimentConfig()
-cfg.N_RUNS = 3
-cfg.N_CHANGES = 7
-cfg.GENS_PER_CHANGE = 15
-cfg.PROBLEMS = ["FDA1", "FDA2", "FDA3", "dMOP1", "dMOP2", "dMOP3"]
-
-report_root = build_report_paths(Path("benchmark_outputs/medium"), prefix="benchmark")
-(report_root / "figures").mkdir(parents=True, exist_ok=True)
-
-runner = ExperimentRunner(cfg)
-results = runner.run_all()
-ablation_results = runner.run_ablation_all()
-
-plot_config = build_benchmark_plot_config("paper")
-presenter = ResultPresenter(
-    results,
-    cfg,
-    igd_curves=runner.igd_curves,
-    hv_curves=runner.hv_curves,
-    algorithm_diagnostics=runner.algorithm_diagnostics,
-    ablation_results=ablation_results,
-    setting_results=runner.setting_results,
-    ablation_setting_results=runner.ablation_setting_results,
-)
-presenter.plot_all(prefix=str(report_root / "figures" / "benchmark"), plot_config=plot_config)
-export_benchmark_report(
-    results,
-    cfg,
-    output_root=report_root,
-    ablation_results=ablation_results,
-    setting_results=runner.setting_results,
-    ablation_setting_results=runner.ablation_setting_results,
-)
-print(report_root)
-'@ | python -
+python -m apps.benchmark_runner --full --force-rerun
 ```
 
-Recommended medium-scale values in this script:
+A simple warm-rerun check:
 
-- `N_RUNS = 3`
-- `N_CHANGES = 7`
-- `GENS_PER_CHANGE = 15`
+```powershell
+python -m apps.benchmark_runner --quick --force-rerun
+python -m apps.benchmark_runner --quick
+```
 
 ### 2.5 Useful benchmark options
+
+Skip ablation variants:
+
+```powershell
+python -m apps.benchmark_runner --full --skip-ablation
+```
+
+Export raw tables and Markdown summary only, without rendering figures:
+
+```powershell
+python -m apps.benchmark_runner --full --summary-only
+```
+
+Restrict algorithms or problems:
+
+```powershell
+python -m apps.benchmark_runner --quick --algorithms KEMM RI Tr
+python -m apps.benchmark_runner --quick --problems FDA1 FDA3 dMOP2
+```
 
 Custom output directory:
 
@@ -124,12 +117,11 @@ Custom output directory:
 python -m apps.benchmark_runner --full --output-dir benchmark_outputs\my_run
 ```
 
-Different plot presets:
+Plot presets and SciencePlots override:
 
 ```powershell
 python -m apps.benchmark_runner --full --plot-preset ieee
-python -m apps.benchmark_runner --full --plot-preset nature
-python -m apps.benchmark_runner --full --plot-preset thesis
+python -m apps.benchmark_runner --full --science-style science,ieee,no-latex
 ```
 
 Appendix plots and interactive figure bundles:
@@ -138,9 +130,9 @@ Appendix plots and interactive figure bundles:
 python -m apps.benchmark_runner --full --appendix-plots --interactive-figures
 ```
 
-### 2.6 Benchmark outputs you should read first
+### 2.6 Benchmark outputs to read first
 
-After a full benchmark run, the most important outputs are:
+After a complete run, read these first:
 
 - `reports/summary.md`
 - `raw/summary.json`
@@ -149,104 +141,87 @@ After a full benchmark run, the most important outputs are:
 - `figures/benchmark_migd_table.png`
 - `figures/benchmark_ablation.png`
 
-Interpretation notes:
+Notes:
 
-- `benchmark_migd_table.png` is the paper-style main table across
-  `(n_t, tau_t) = (5,10), (10,10), (10,20)`.
-- `benchmark_ablation.png` plots relative `MIGD` degradation versus
-  `KEMM-Full`, so positive values mean the ablated variant is worse.
-- If you ever see a historical report where `FDA1` and `dMOP3` have identical
-  metric rows, treat it as stale output generated before the `dMOP3` fix.
+- `benchmark_migd_table.png` is the paper-style main table across the three dynamic settings.
+- `benchmark_ablation.png` plots relative `MIGD` degradation versus `KEMM-Full`, so positive values mean the ablated variant is worse.
+- Only the canonical setting keeps the full `igd_curve / hv_curve / change_diagnostics` aggregation; non-canonical settings mainly keep scalar end metrics.
 
 ### 2.7 Compatibility wrapper
-
-Legacy wrapper commands still work:
 
 ```powershell
 python run_experiments.py --quick
 python run_experiments.py --full
 ```
 
-But the real entry point is still:
+These commands still work, but the real entry point remains:
 
 ```powershell
 python -m apps.benchmark_runner
 ```
 
+---
+
 ## 3. Ship Physical Simulation
 
 ### 3.1 Important distinction
 
-This command:
+Single demo entry point:
 
 ```powershell
 python -m apps.ship_runner
 ```
 
-is only a single demo entry point.
-
-This command:
+Full batch-report entry point:
 
 ```powershell
 python ship_simulation/run_report.py
 ```
 
-is the full ship physical batch-report entry point.
-
-If you want the complete ship physical test module, use:
-
-```powershell
-python ship_simulation/run_report.py
-```
+Use the second command when you want the full ship experiment/report pipeline.
 
 ### 3.2 Single demo run
 
-Default demo:
-
 ```powershell
 python -m apps.ship_runner
-```
-
-Single scenario, explicit optimizer:
-
-```powershell
 python -c "from ship_simulation.main_demo import run_demo; run_demo('crossing', optimizer_name='kemm', show_animation=False)"
 python -c "from ship_simulation.main_demo import run_demo; run_demo('harbor_clutter', optimizer_name='kemm', show_animation=False)"
 ```
 
-Use this when you want:
+This is useful when you want:
 
 - one scenario only
-- no full batch report
-- a quick run for debugging
+- a quick trajectory check
+- no full report export
 
 ### 3.3 Quick ship report
 
 ```powershell
 python ship_simulation/run_report.py --quick --scenarios crossing --n-runs 1 --plot-preset paper
-```
-
-Two key scenarios:
-
-```powershell
 python ship_simulation/run_report.py --quick --scenarios crossing harbor_clutter --n-runs 1 --plot-preset paper
 ```
 
 Current `--quick` meaning:
 
+- `scenario_profiles.active_profile_name = legacy_uniform`
 - `random_search_samples = 20`
 - `NSGA-style pop_size = 22`
 - `NSGA-style generations = 10`
 - `KEMM pop_size = 28`
 - `KEMM generations = 12`
+- `KEMM initial_guess_copies = 4`
+- `local_horizon = 320`
+- `execution_horizon = 160`
+- `max_replans = 8`
 - `n_runs = 1`
+- `render_workers = 1`
 
-### 3.4 Full ship physical test
+### 3.4 Full ship report
 
-This is the most important ship command:
+README keeps only this complete-run command:
 
 ```powershell
-python ship_simulation/run_report.py
+python ship_simulation/run_report.py --workers 4
 ```
 
 By default it runs:
@@ -254,22 +229,58 @@ By default it runs:
 - scenarios: `head_on`, `crossing`, `overtaking`, `harbor_clutter`
 - optimizers: `kemm`, `nsga_style`, `random`
 - repeated runs per optimizer per scenario: `3`
+- total episodes: `36`
+- default figure count: `4 * 19 + 2 = 78`
 
-Default important values:
+Complete mode also enables two important defaults:
 
-- `KEMM pop_size = 48`
-- `KEMM generations = 24`
-- `NSGA-style pop_size = 36`
-- `NSGA-style generations = 16`
-- `Random search samples = 48`
-- `n_runs = 3`
+- `scenario_profiles.active_profile_name = full_tuned`
+- `episode_cache_enabled = True`
 
-### 3.5 Select scenarios and repeated runs
+The internal execution is now staged as:
+
+1. compute all episodes and write `raw/episode_cache/`
+2. render figures in parallel
+3. write summary, metadata, and figure inventory
+
+### 3.5 Ship cache and metadata
+
+Episode cache directory:
+
+- `ship_simulation/outputs/report_YYYYMMDD_HHMMSS/raw/episode_cache/`
+
+If you rerun the same configuration against the same output directory:
+
+- episode results are reused from cache
+- figures are regenerated completely
+- summary and metadata are rewritten
+
+Current metadata includes:
+
+- `scenario_solve_profile`
+- `episode_compute_seconds`
+- `figure_render_seconds`
+- `episode_cache_hits`
+- `episode_cache_misses`
+
+### 3.6 Select scenarios, algorithms, and repeated runs
 
 Only the dense harbor scenario:
 
 ```powershell
 python ship_simulation/run_report.py --scenarios harbor_clutter --n-runs 3 --plot-preset paper
+```
+
+Compare only `kemm` and `random`:
+
+```powershell
+python ship_simulation/run_report.py --algorithms kemm random --scenarios crossing overtaking
+```
+
+Add strict budget-matched baselines (`*_matched`) while keeping the original groups:
+
+```powershell
+python ship_simulation/run_report.py --algorithms kemm random nsga_style --strict-comparable
 ```
 
 Explicit full scenario list:
@@ -278,97 +289,162 @@ Explicit full scenario list:
 python ship_simulation/run_report.py --scenarios head_on crossing overtaking harbor_clutter --n-runs 3 --plot-preset paper
 ```
 
-### 3.6 Interactive 3D export
+### 3.7 Dynamic experiment profiles
 
-Ship rule summary:
+`--experiment-profile` controls scheduled changes during rolling-horizon execution. It is not the same as the scenario solve profile set.
 
-- only 3D plots get interactive exports
-- 2D plots stay PNG-only
+Supported values:
 
-Command:
+- `baseline`
+- `drift`
+- `shock`
+- `recurring_harbor`
 
-```powershell
-python ship_simulation/run_report.py --scenarios head_on crossing overtaking harbor_clutter --n-runs 3 --plot-preset paper --interactive-figures --interactive-html
-```
-
-### 3.6b Run dynamic ship experiment profiles
-
-Use `--experiment-profile` when you want the rolling-horizon ship report to include scheduled scenario changes.
-
-Command:
+Examples:
 
 ```powershell
-python ship_simulation/run_report.py --scenarios harbor_clutter --n-runs 3 --plot-preset paper --experiment-profile drift
-python ship_simulation/run_report.py --scenarios harbor_clutter --n-runs 3 --plot-preset paper --experiment-profile shock
-python ship_simulation/run_report.py --scenarios harbor_clutter --n-runs 3 --plot-preset paper --experiment-profile recurring_harbor
+python ship_simulation/run_report.py --scenarios harbor_clutter --n-runs 3 --experiment-profile drift
+python ship_simulation/run_report.py --scenarios harbor_clutter --n-runs 3 --experiment-profile shock
+python ship_simulation/run_report.py --scenarios harbor_clutter --n-runs 3 --experiment-profile recurring_harbor
 ```
 
-Supported profiles:
+Meaning:
 
-- `baseline`: no extra scheduled changes
+- `baseline`: no additional scheduled changes
 - `drift`: gradual environment and traffic drift
 - `shock`: sudden closure and stronger perturbation
 - `recurring_harbor`: harbor drift followed by partial recovery
 
-### 3.7 Adjust scenario-generation parameters
+### 3.8 Solve profile defaults
 
-If you want to tune ship scenarios without editing `generator.py`, use:
+Ship experiments now use a second profile system through `DemoConfig.scenario_profiles`.
 
-- `ProblemConfig.scenario_generation` in `ship_simulation/config.py`
+Current defaults:
 
-Example:
+- complete runs: `full_tuned`
+- quick runs: `legacy_uniform`
 
-```python
-from ship_simulation.config import build_default_config
+`full_tuned` changes these values per scenario:
 
-config = build_default_config()
-config.scenario_generation.harbor_clutter.circular_obstacle_limit = 5
-config.scenario_generation.harbor_clutter.polygon_obstacle_limit = 2
-config.scenario_generation.harbor_clutter.target_limit = 2
-config.scenario_generation.harbor_clutter.circular_radius_scale = 0.55
-config.scenario_generation.harbor_clutter.channel_width_scale = 1.20
+- solver budgets
+- local and execution horizon
+- `safety_clearance`
+- risk-related penalties and `domain_risk_weight`
+- `objective_weights`
+
+There is currently no dedicated CLI flag to switch solve profiles. If you want a `legacy_uniform` versus `full_tuned` A/B, set `demo.scenario_profiles.active_profile_name` in Python before calling the report generator.
+
+### 3.9 Statistical significance export
+
+Ship report now exports confidence intervals and pairwise significance tests by default:
+
+- `raw/statistical_tests.json`
+- `raw/statistical_tests.csv`
+- `reports/statistical_significance.md`
+
+The test policy is:
+
+- Welch t-test when both groups pass normality checks and sample size is large enough
+- Mann-Whitney U otherwise
+
+### 3.10 Robustness sweep
+
+Run disturbance-level robustness sweeps and export success-rate curves:
+
+```powershell
+python ship_simulation/run_report.py --robustness-sweep --robustness-levels 0,0.25,0.5,0.75,1.0 --robustness-scenarios crossing overtaking harbor_clutter
 ```
 
-This lets you directly control:
+Outputs:
 
-- obstacle counts
-- traffic-ship counts
-- obstacle scales
-- channel width
-- scalar/vector field intensity
+- `raw/robustness_runs.csv`
+- `raw/robustness_curve.csv`
+- `raw/robustness_summary.json`
+- `reports/robustness_sweep.md`
+- `figures/robustness_success_curve.png` (when rendering is enabled)
 
-If you want to control dynamic ship experiments in code instead of CLI, use:
+### 3.11 Interactive exports
 
-```python
-from ship_simulation.config import apply_experiment_profile, build_default_config
+Only `pareto3d` and `spatiotemporal` produce extra interactive artifacts.
 
-config = build_default_config()
-apply_experiment_profile(config, "shock")
+```powershell
+python ship_simulation/run_report.py --quick --scenarios crossing --interactive-figures --interactive-html
 ```
 
-This writes the scheduled changes into `ProblemConfig.experiment`.
+Notes:
+
+- `*.fig.pickle`: matplotlib figure bundle
+- `.html`: browser-based interactive export
+- other 2D plots remain PNG-only
+
+### 3.12 Useful ship options
+
+Export raw outputs and Markdown summary only, without figures:
+
+```powershell
+python ship_simulation/run_report.py --summary-only
+```
+
+Plot presets and SciencePlots override:
+
+```powershell
+python ship_simulation/run_report.py --plot-preset ieee
+python ship_simulation/run_report.py --science-style science,ieee,no-latex
+```
+
+Appendix plots:
+
+```powershell
+python ship_simulation/run_report.py --appendix-plots
+```
+
+### 3.13 Latest-structure smoke check
+
+If you want one command to validate strict comparable + statistical export + robustness export together:
+
+```powershell
+python ship_simulation/run_report.py --quick --summary-only --scenarios crossing --n-runs 1 --algorithms kemm random --strict-comparable --robustness-sweep --robustness-levels 0,0.5 --robustness-scenarios crossing
+```
+
+Expected key outputs:
+
+- `raw/statistical_tests.json`
+- `raw/statistical_tests.csv`
+- `reports/statistical_significance.md`
+- `raw/robustness_runs.csv`
+- `raw/robustness_curve.csv`
+- `raw/robustness_summary.json`
+- `reports/robustness_sweep.md`
+
+---
 
 ## 4. Output Directories
 
-Benchmark default output:
+Benchmark:
 
-```text
-benchmark_outputs/benchmark_YYYYMMDD_HHMMSS/
-```
+- `benchmark_outputs/benchmark_YYYYMMDD_HHMMSS/`
 
-Ship default output:
+Ship:
 
-```text
-ship_simulation/outputs/report_YYYYMMDD_HHMMSS/
-```
+- `ship_simulation/outputs/report_YYYYMMDD_HHMMSS/`
 
-The main subdirectories are:
+Shared main subdirectories:
 
 - `figures/`
 - `raw/`
 - `reports/`
 
-## 5. Tests
+Ship `raw/` files worth checking first:
+
+- `report_metadata.json`
+- `figure_manifest.json`
+- `representative_runs.json`
+- `planning_steps.json`
+- `scenario_catalog.json`
+
+---
+
+## 5. Tests and Regressions
 
 Full unit test suite:
 
@@ -376,58 +452,25 @@ Full unit test suite:
 python -m unittest discover -s tests -v
 ```
 
-Quick benchmark regression:
+Benchmark quick regression:
 
 ```powershell
+python -m apps.benchmark_runner --quick --force-rerun
 python -m apps.benchmark_runner --quick
 ```
 
-Quick ship regression:
+Ship quick regression:
 
 ```powershell
 python ship_simulation/run_report.py --quick --scenarios crossing harbor_clutter --n-runs 1
 ```
 
-## 6. One-Screen Cheat Sheet
+---
 
-Benchmark quick:
+## 6. Suggested Reading Order
 
-```powershell
-python -m apps.benchmark_runner --quick --plot-preset paper
-```
-
-Benchmark medium:
-
-```text
-Use the PowerShell script in section 2.4 of this file.
-```
-
-Benchmark full:
-
-```powershell
-python -m apps.benchmark_runner --full --plot-preset paper
-```
-
-Ship single demo:
-
-```powershell
-python -m apps.ship_runner
-```
-
-Ship single harbor run:
-
-```powershell
-python -c "from ship_simulation.main_demo import run_demo; run_demo('harbor_clutter', optimizer_name='kemm', show_animation=False)"
-```
-
-Ship quick report:
-
-```powershell
-python ship_simulation/run_report.py --quick --scenarios crossing harbor_clutter --n-runs 1 --plot-preset paper
-```
-
-Ship full physical test:
-
-```powershell
-python ship_simulation/run_report.py
-```
+- [README.md](README.md)
+- [run_commands.md](run_commands.md)
+- [ship_experiment_playbook.md](ship_experiment_playbook.md)
+- [visualization_guide.md](visualization_guide.md)
+- [figure_catalog.md](figure_catalog.md)
